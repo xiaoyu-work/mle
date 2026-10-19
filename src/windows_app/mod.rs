@@ -68,7 +68,6 @@ struct Work {
 
 struct Reply {
     id: u64,
-    source: String,
     text: Result<popup::Content, String>,
 }
 
@@ -118,7 +117,6 @@ fn defer_error(error: String) {
 fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
     let mut client: Option<http::Client> = None;
     while let Ok(work) = receiver.recv() {
-        let mut selected_text = String::new();
         let text = (|| -> AppResult<popup::Content> {
             let source = HWND(work.source as *mut _);
             if unsafe { GetForegroundWindow() } != source {
@@ -127,7 +125,6 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
                 );
             }
             let selection = selection::Selection::new()?.text()?;
-            selected_text.clone_from(&selection);
             if unsafe { GetForegroundWindow() } != source {
                 return Err("The active application changed while reading the selection.".into());
             }
@@ -154,14 +151,7 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
                 .map(popup::Content::Translation)
         })()
         .map_err(|e| e.to_string());
-        if replies
-            .send(Reply {
-                id: work.id,
-                source: selected_text,
-                text,
-            })
-            .is_err()
-        {
+        if replies.send(Reply { id: work.id, text }).is_err() {
             break;
         }
         if unsafe {
@@ -425,8 +415,8 @@ impl App {
                 return Err(windows::core::Error::from_thread().into());
             }
             let dpi = GetDpiForWindow(self.popup.hwnd) as i32;
-            let width = (480 * dpi / 96).min(info.rcWork.right - info.rcWork.left);
-            let height = (280 * dpi / 96).min(info.rcWork.bottom - info.rcWork.top);
+            let width = (420 * dpi / 96).min(info.rcWork.right - info.rcWork.left);
+            let height = (80 * dpi / 96).min(info.rcWork.bottom - info.rcWork.top);
             let x = (point.x + 16).clamp(
                 info.rcWork.left,
                 (info.rcWork.right - width).max(info.rcWork.left),
@@ -444,7 +434,8 @@ impl App {
                 height,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             )?;
-            self.popup.render("", &popup::Content::Loading)?;
+            self.popup
+                .render(&popup::Content::Loading, self.config.font_size)?;
             self.popup_visible = true;
             if SetTimer(Some(self.host), POPUP_TIMER, 100, None) == 0 {
                 return Err("Could not start popup dismissal timer.".into());
@@ -460,7 +451,7 @@ impl App {
                     Ok(content) => content,
                     Err(error) => popup::Content::Error(error),
                 };
-                self.popup.render(&reply.source, &content)?;
+                self.popup.render(&content, self.config.font_size)?;
             }
         }
         Ok(())

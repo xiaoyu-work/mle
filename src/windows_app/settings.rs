@@ -8,7 +8,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use super::{APP, credentials, send_message, show_error, theme, wide};
+use super::{APP, credentials, popup, send_message, show_error, theme, wide};
 use crate::{
     AppResult,
     config::{Config, Trigger},
@@ -24,6 +24,8 @@ const SHORTCUT_LABEL: i32 = 215;
 const REVEAL: i32 = 216;
 const ENDPOINT_LABEL: i32 = 217;
 const KEY_LABEL: i32 = 218;
+const FONT_SIZE: i32 = 219;
+const PREVIEW: i32 = 220;
 const REFRESH_DPI: u32 = WM_APP + 20;
 
 pub struct Window {
@@ -113,6 +115,32 @@ impl Window {
                 KEY,
             )?;
             send_message(key, EM_SETLIMITTEXT, WPARAM(512), LPARAM(0));
+            let font_size = create(
+                w!("COMBOBOX"),
+                "",
+                WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                FONT_SIZE,
+            )?;
+            for size in 12..=32 {
+                let label = wide(&format!("{size} px"));
+                if send_message(
+                    font_size,
+                    CB_ADDSTRING,
+                    WPARAM(0),
+                    LPARAM(label.as_ptr() as isize),
+                )
+                .0 < 0
+                {
+                    return Err("Could not populate font sizes.".into());
+                }
+            }
+            send_message(font_size, CB_SETCURSEL, WPARAM(5), LPARAM(0));
+            let preview = popup::create_text(hwnd, PREVIEW)?;
+            theme::set_text(
+                preview,
+                "\u{8fd9}\u{662f}\u{7ffb}\u{8bd1}\u{6548}\u{679c}\u{9884}\u{89c8}\u{3002}",
+            )?;
+            update_preview(hwnd)?;
             for (title, id, style) in [
                 ("Show", REVEAL, theme::QUIET),
                 ("Cancel", IDCANCEL.0, theme::QUIET),
@@ -152,6 +180,7 @@ impl Window {
                 REVEAL,
                 ENDPOINT_LABEL,
                 KEY_LABEL,
+                FONT_SIZE,
                 IDCANCEL.0,
                 SAVE as i32,
             ] {
@@ -181,6 +210,15 @@ impl Window {
             LPARAM(0),
         );
         theme::set_text(self.endpoint, &config.azure_endpoint)?;
+        unsafe {
+            send_message(
+                GetDlgItem(Some(self.hwnd), FONT_SIZE)?,
+                CB_SETCURSEL,
+                WPARAM(usize::from(config.font_size - 12)),
+                LPARAM(0),
+            );
+        }
+        update_preview(self.hwnd)?;
         theme::set_text(self.key, &credentials::read()?.unwrap_or_default())?;
         mask_key(self.hwnd, true)
     }
@@ -208,10 +246,37 @@ impl Window {
             hotkey_modifiers: modifiers,
             hotkey_key: hotkey & 0xff,
             azure_endpoint: theme::text(self.endpoint).trim().to_owned(),
+            font_size: selected_font_size(self.hwnd)?,
         };
         config.validate()?;
         Ok((config, theme::text(self.key).trim().to_owned()))
     }
+}
+
+fn selected_font_size(hwnd: HWND) -> AppResult<u16> {
+    let index = unsafe {
+        send_message(
+            GetDlgItem(Some(hwnd), FONT_SIZE)?,
+            CB_GETCURSEL,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .0
+    };
+    if !(0..=20).contains(&index) {
+        return Err("Select a translation font size.".into());
+    }
+    Ok(index as u16 + 12)
+}
+
+fn update_preview(hwnd: HWND) -> AppResult<()> {
+    let size = selected_font_size(hwnd)?;
+    unsafe {
+        let preview = GetDlgItem(Some(hwnd), PREVIEW)?;
+        popup::format_text(preview, size, theme::TEXT);
+        ShowScrollBar(preview, SB_VERT, false)?;
+    }
+    Ok(())
 }
 
 fn choose_trigger(hwnd: HWND, shortcut: bool) -> AppResult<()> {
@@ -242,8 +307,10 @@ fn layout(hwnd: HWND) -> AppResult<()> {
             (KEY_LABEL, 44, 408 + offset, 360, 22),
             (KEY, 56, 441 + offset, 356, 22),
             (REVEAL, 438, 432 + offset, 74, 34),
-            (IDCANCEL.0, 258, 512 + offset, 92, 40),
-            (SAVE as i32, 364, 512 + offset, 172, 40),
+            (FONT_SIZE, 392, 523 + offset, 124, 220),
+            (PREVIEW, 44, 570 + offset, 472, 50),
+            (IDCANCEL.0, 258, 650 + offset, 92, 40),
+            (SAVE as i32, 364, 650 + offset, 172, 40),
         ] {
             MoveWindow(
                 GetDlgItem(Some(hwnd), id)?,
@@ -257,7 +324,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
         let dpi = GetDpiForWindow(hwnd);
         let mut bounds = RECT {
             right: theme::px(hwnd, 560),
-            bottom: theme::px(hwnd, 576 + offset),
+            bottom: theme::px(hwnd, 714 + offset),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -415,6 +482,19 @@ fn paint(hwnd: HWND) {
                 Some(theme::BORDER),
             );
         }
+        canvas.rounded(
+            canvas.rect(24, 508 + offset, 512, 126),
+            14,
+            theme::SURFACE,
+            Some(theme::BORDER),
+        );
+        canvas.label(
+            "Translation font size",
+            canvas.rect(44, 522 + offset, 330, 26),
+            14,
+            600,
+            theme::TEXT,
+        );
         let _ = EndPaint(hwnd, &paint);
     }
 }
@@ -442,6 +522,11 @@ pub unsafe extern "system" fn window_proc(
             }
             WM_COMMAND if [RIGHT_HOLD as usize, HOTKEY as usize].contains(&(wp.0 & 0xffff)) => {
                 choose_trigger(hwnd, wp.0 & 0xffff == HOTKEY as usize)
+            }
+            WM_COMMAND
+                if wp.0 & 0xffff == FONT_SIZE as usize && (wp.0 >> 16) as u32 == CBN_SELCHANGE =>
+            {
+                update_preview(hwnd)
             }
             WM_COMMAND if wp.0 & 0xffff == REVEAL as usize => GetDlgItem(Some(hwnd), KEY)
                 .map_err(Into::into)

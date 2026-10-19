@@ -17,6 +17,7 @@ pub struct Config {
     pub hotkey_modifiers: u32,
     pub hotkey_key: u16,
     pub azure_endpoint: String,
+    pub font_size: u16,
 }
 
 impl Default for Config {
@@ -26,12 +27,16 @@ impl Default for Config {
             hotkey_modifiers: 3,
             hotkey_key: b'T' as u16,
             azure_endpoint: String::new(),
+            font_size: 17,
         }
     }
 }
 
 impl Config {
     pub fn validate(&self) -> AppResult<()> {
+        if !(12..=32).contains(&self.font_size) {
+            return Err("Translation font size must be between 12 and 32 px.".into());
+        }
         if self.hotkey_key == 0 || self.hotkey_modifiers & !7 != 0 {
             return Err("Choose a valid shortcut using Ctrl, Alt, or Shift.".into());
         }

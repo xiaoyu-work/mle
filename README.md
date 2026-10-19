@@ -21,8 +21,8 @@ Settings, or right-click it to exit.
   keyboard mode is recommended for games and unusual mouse interactions.
 - Results appear without taking focus. Esc, an outside click, or changing the
   foreground application dismisses the popup. Long results can be scrolled.
-- Dictionary entries are separated into numbered meanings, with domain labels
-  where available. **Copy** explicitly copies the displayed result to the clipboard.
+- The compact popup shows only the result, without branding, headings, or original
+  text. Dictionary meanings remain separated and long results can be scrolled.
 
 Selection capture uses UI Automation. Compatibility depends on the source
 application's accessibility implementation. Image text, password fields, secure
@@ -36,6 +36,10 @@ under 10,000,000 bytes, includes only English headwords and Chinese meanings, an
 is queried through a read-only SQLite connection with a 256 KiB page-cache
 budget. It is not loaded wholesale. Inflection tables and pronunciation are
 not included; words absent from the dictionary can use online translation.
+
+**Translation font size** adjusts the result text from 12 to 32 logical pixels.
+The sample underneath updates immediately using the same font as the popup.
+Save applies the size to future results; Cancel discards the change.
 
 To enable online translation, enter your Azure OpenAI deployment's full
 **chat completions endpoint** and its **API key**, and save. For example:
