@@ -11,7 +11,7 @@ use windows::{
 use super::{send_message, wide};
 use crate::AppResult;
 
-pub const BACKGROUND: COLORREF = rgb(246, 247, 251);
+pub const BACKGROUND: COLORREF = SURFACE;
 pub const SURFACE: COLORREF = rgb(255, 255, 255);
 pub const TEXT: COLORREF = rgb(30, 35, 50);
 pub const MUTED: COLORREF = rgb(112, 119, 138);
@@ -171,8 +171,8 @@ pub fn draw_button(item: &DRAWITEMSTRUCT) {
             SURFACE,
             None,
         ),
-        CHOICE if selected => (TINT, ACCENT, Some(rgb(201, 194, 248))),
-        CHOICE => (SURFACE, MUTED, Some(BORDER)),
+        CHOICE if selected => (TINT, ACCENT, None),
+        CHOICE => (SURFACE, MUTED, None),
         _ => (
             if pressed {
                 TINT
@@ -301,24 +301,6 @@ impl Canvas {
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
             );
             SelectObject(self.hdc, previous);
-        }
-    }
-
-    pub fn logo(&self, x: i32, y: i32, size: i32) {
-        if let Ok(icon) = icon(self.scale(size)) {
-            unsafe {
-                let _ = DrawIconEx(
-                    self.hdc,
-                    self.scale(x),
-                    self.scale(y),
-                    icon,
-                    self.scale(size),
-                    self.scale(size),
-                    0,
-                    None,
-                    DI_NORMAL,
-                );
-            }
         }
     }
 }

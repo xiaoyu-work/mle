@@ -169,28 +169,80 @@ impl Window {
             ),
             Content::Error(error) => (error.to_owned(), theme::ERROR),
         };
-        send_message(self.body, WM_SETREDRAW, WPARAM(0), LPARAM(0));
         let result = (|| -> AppResult<()> {
+            let width = text_width(self.hwnd, &body, font_size)? + theme::px(self.hwnd, 12);
+            fit_size(self.hwnd, width, theme::px(self.hwnd, 80))?;
             theme::set_text(self.body, &body)?;
             format_text(self.body, font_size, color);
-            send_message(self.body, EM_REQUESTRESIZE, WPARAM(0), LPARAM(0));
-            let height = unsafe { GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) } as i32;
-            if height <= 0 {
-                return Err("Could not measure the translation layout.".into());
+            // A height change can remove the scrollbar and change wrapping.
+            for _ in 0..2 {
+                send_message(self.body, EM_REQUESTRESIZE, WPARAM(0), LPARAM(0));
+                let height = unsafe { GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) } as i32;
+                if height <= 0 {
+                    return Err("Could not measure the translation layout.".into());
+                }
+                fit_size(
+                    self.hwnd,
+                    width,
+                    (height + theme::px(self.hwnd, 12)).min(theme::px(self.hwnd, 480)),
+                )?;
             }
-            fit_height(
-                self.hwnd,
-                (height + theme::px(self.hwnd, 12)).min(theme::px(self.hwnd, 480)),
-            )
+            Ok(())
         })();
-        send_message(self.body, WM_SETREDRAW, WPARAM(1), LPARAM(0));
         theme::invalidate(self.body);
         theme::invalidate(self.hwnd);
         result
     }
 }
 
-fn fit_height(hwnd: HWND, height: i32) -> AppResult<()> {
+fn text_width(hwnd: HWND, text: &str, font_size: u16) -> AppResult<i32> {
+    unsafe {
+        let font = CreateFontW(
+            -theme::px(hwnd, i32::from(font_size)),
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY,
+            0,
+            w!("Microsoft YaHei UI"),
+        );
+        if font.is_invalid() {
+            return Err(windows::core::Error::from_thread().into());
+        }
+        let font = theme::Font(font);
+        let hdc = GetDC(Some(hwnd));
+        if hdc.is_invalid() {
+            return Err(windows::core::Error::from_thread().into());
+        }
+        let previous = SelectObject(hdc, font.0.into());
+        let mut rect = RECT {
+            right: theme::px(hwnd, 408),
+            ..Default::default()
+        };
+        let mut text: Vec<u16> = text.replace('\r', "\n").encode_utf16().collect();
+        let measured = DrawTextW(
+            hdc,
+            &mut text,
+            &mut rect,
+            DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
+        );
+        SelectObject(hdc, previous);
+        ReleaseDC(Some(hwnd), hdc);
+        if measured == 0 {
+            return Err("Could not measure translation text width.".into());
+        }
+        Ok((rect.right + theme::px(hwnd, 2)).clamp(theme::px(hwnd, 24), theme::px(hwnd, 408)))
+    }
+}
+
+fn fit_size(hwnd: HWND, width: i32, height: i32) -> AppResult<()> {
     unsafe {
         let mut bounds = RECT::default();
         GetWindowRect(hwnd, &mut bounds)?;
@@ -207,15 +259,19 @@ fn fit_height(hwnd: HWND, height: i32) -> AppResult<()> {
             return Err(windows::core::Error::from_thread().into());
         }
         let height = height.min(monitor.rcWork.bottom - monitor.rcWork.top);
+        let width = width.min(monitor.rcWork.right - monitor.rcWork.left);
+        let x = bounds
+            .left
+            .clamp(monitor.rcWork.left, monitor.rcWork.right - width);
         let y = bounds
             .top
             .clamp(monitor.rcWork.top, monitor.rcWork.bottom - height);
         SetWindowPos(
             hwnd,
             None,
-            bounds.left,
+            x,
             y,
-            bounds.right - bounds.left,
+            width,
             height,
             SWP_NOZORDER | SWP_NOACTIVATE,
         )?;

@@ -37,7 +37,9 @@ is queried through a read-only SQLite connection with a 256 KiB page-cache
 budget. It is not loaded wholesale. Inflection tables and pronunciation are
 not included; words absent from the dictionary can use online translation.
 
-**Translation font size** adjusts the result text from 12 to 32 logical pixels.
+The compact, single-surface Settings page uses inline fields and a font-size
+slider rather than nested cards. **Translation font size** adjusts the result
+text from 12 to 32 logical pixels.
 The sample underneath updates immediately using the same font as the popup.
 Save applies the size to future results; Cancel discards the change.
 
