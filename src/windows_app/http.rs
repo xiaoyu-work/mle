@@ -27,12 +27,13 @@ impl Drop for Handle {
 }
 
 pub struct Client {
+    pub host: String,
     connection: Handle,
     _session: Handle,
 }
 
 impl Client {
-    pub fn new() -> AppResult<Self> {
+    pub fn new(host: &str) -> AppResult<Self> {
         unsafe {
             let session = Handle::new(WinHttpOpen(
                 w!("MLE/0.1"),
@@ -41,19 +42,25 @@ impl Client {
                 PCWSTR::null(),
                 0,
             ))?;
-            WinHttpSetTimeouts(session.0, 5000, 5000, 5000, 10000)?;
-            let host = super::wide(translation::HOST);
-            let connection = Handle::new(WinHttpConnect(session.0, PCWSTR(host.as_ptr()), 443, 0))?;
+            WinHttpSetTimeouts(session.0, 5000, 5000, 10000, 30000)?;
+            let host_wide = super::wide(host);
+            let connection = Handle::new(WinHttpConnect(
+                session.0,
+                PCWSTR(host_wide.as_ptr()),
+                443,
+                0,
+            ))?;
             Ok(Self {
+                host: host.to_owned(),
                 connection,
                 _session: session,
             })
         }
     }
 
-    pub fn translate(&self, text: &str, key: &str, region: &str) -> AppResult<String> {
+    pub fn translate(&self, text: &str, key: &str, path: &str) -> AppResult<String> {
         let body = translation::request(text)?;
-        let path = super::wide(translation::PATH);
+        let path = super::wide(path);
         unsafe {
             let request = Handle::new(WinHttpOpenRequest(
                 self.connection.0,
@@ -70,11 +77,7 @@ impl Client {
                 WINHTTP_OPTION_REDIRECT_POLICY,
                 Some(&WINHTTP_OPTION_REDIRECT_POLICY_NEVER.to_ne_bytes()),
             )?;
-            let mut headers =
-                format!("Content-Type: application/json\r\nOcp-Apim-Subscription-Key: {key}\r\n");
-            if !region.is_empty() {
-                headers.push_str(&format!("Ocp-Apim-Subscription-Region: {region}\r\n"));
-            }
+            let headers = format!("Content-Type: application/json\r\napi-key: {key}\r\n");
             let headers = super::wide(&headers);
             WinHttpSendRequest(
                 request.0,
@@ -97,7 +100,9 @@ impl Client {
             )?;
             if status != 200 {
                 let reason = match status {
-                    401 | 403 => "Check your subscription key and region in Settings.",
+                    401 | 403 => "Check the Azure OpenAI API key and endpoint in Settings.",
+                    404 => "Check the deployment name and API version in the endpoint.",
+                    400 => "The model rejected the request or the selection was filtered.",
                     429 => "Translation quota or rate limit reached.",
                     _ => "The translation service could not complete the request.",
                 };

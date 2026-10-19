@@ -16,48 +16,21 @@ use crate::{
 
 const SAVE: usize = 200;
 const TRIGGER: usize = 210;
-const REGIONS: &[(&str, &str)] = &[
-    ("Global", ""),
-    ("East US", "eastus"),
-    ("East US 2", "eastus2"),
-    ("West US", "westus"),
-    ("West US 2", "westus2"),
-    ("West US 3", "westus3"),
-    ("Central US", "centralus"),
-    ("South Central US", "southcentralus"),
-    ("Canada Central", "canadacentral"),
-    ("Brazil South", "brazilsouth"),
-    ("North Europe", "northeurope"),
-    ("West Europe", "westeurope"),
-    ("UK South", "uksouth"),
-    ("France Central", "francecentral"),
-    ("Switzerland North", "switzerlandnorth"),
-    ("East Asia", "eastasia"),
-    ("Southeast Asia", "southeastasia"),
-    ("Japan East", "japaneast"),
-    ("Japan West", "japanwest"),
-    ("Korea Central", "koreacentral"),
-    ("Central India", "centralindia"),
-    ("Australia East", "australiaeast"),
-    ("South Africa North", "southafricanorth"),
-    ("UAE North", "uaenorth"),
-];
 
 pub struct Window {
     pub hwnd: HWND,
     trigger: HWND,
     hotkey_label: HWND,
     hotkey: HWND,
-    region_label: HWND,
-    region: HWND,
-    regions: Vec<String>,
+    endpoint_label: HWND,
+    endpoint: HWND,
     key_label: HWND,
     key: HWND,
     save: HWND,
 }
 
 impl Window {
-    pub fn create(config: &Config) -> AppResult<Self> {
+    pub fn create() -> AppResult<Self> {
         unsafe {
             let controls = INITCOMMONCONTROLSEX {
                 dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
@@ -141,32 +114,18 @@ impl Window {
                 28,
                 212,
             )?;
-            let region_label = label("Azure region", 112)?;
-            let region = create(
-                w!("COMBOBOX"),
+            let endpoint_label = label("Endpoint", 112)?;
+            let endpoint = create(
+                w!("EDIT"),
                 "",
-                WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                WS_TABSTOP | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
                 136,
                 112,
                 336,
-                240,
+                28,
                 213,
             )?;
-            let mut regions = Vec::new();
-            for &(label, code) in REGIONS {
-                let display = if code.is_empty() {
-                    label.to_owned()
-                } else {
-                    format!("{label} ({code})")
-                };
-                add_item(region, &display)?;
-                regions.push(code.to_owned());
-            }
-            // Retain an existing region even if it is not in the preset list.
-            if !regions.contains(&config.azure_region) {
-                add_item(region, &config.azure_region)?;
-                regions.push(config.azure_region.clone());
-            }
+            send_message(endpoint, EM_SETLIMITTEXT, WPARAM(2048), LPARAM(0));
             let key_label = label("API key", 156)?;
             let key = create(
                 w!("EDIT"),
@@ -194,9 +153,8 @@ impl Window {
                 trigger,
                 hotkey_label,
                 hotkey,
-                region_label,
-                region,
-                regions,
+                endpoint_label,
+                endpoint,
                 key_label,
                 key,
                 save,
@@ -227,14 +185,10 @@ impl Window {
             WPARAM((config.hotkey_key | modifiers << 8) as usize),
             LPARAM(0),
         );
-        let region = self
-            .regions
-            .iter()
-            .position(|code| code == &config.azure_region)
-            .ok_or("The saved Azure region is not available.")?;
-        send_message(self.region, CB_SETCURSEL, WPARAM(region), LPARAM(0));
+        let endpoint = wide(&config.azure_endpoint);
         let key = wide(&credentials::read()?.unwrap_or_default());
         unsafe {
+            SetWindowTextW(self.endpoint, PCWSTR(endpoint.as_ptr()))?;
             SetWindowTextW(self.key, PCWSTR(key.as_ptr()))?;
         }
         self.layout()
@@ -249,8 +203,8 @@ impl Window {
             let _ = ShowWindow(self.hotkey_label, show);
             let _ = ShowWindow(self.hotkey, show);
             for (control, x, y, width, height) in [
-                (self.region_label, 24, 72 + offset, 104, 22),
-                (self.region, 136, 68 + offset, 336, 240),
+                (self.endpoint_label, 24, 72 + offset, 104, 22),
+                (self.endpoint, 136, 68 + offset, 336, 28),
                 (self.key_label, 24, 116 + offset, 104, 22),
                 (self.key, 136, 112 + offset, 336, 28),
                 (self.save, 372, 160 + offset, 100, 30),
@@ -295,16 +249,11 @@ impl Window {
         if flags & HOTKEYF_SHIFT as u16 != 0 {
             modifiers |= 4;
         }
-        let region = send_message(self.region, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
         let config = Config {
             trigger,
             hotkey_modifiers: modifiers,
             hotkey_key: hotkey & 0xff,
-            azure_region: self
-                .regions
-                .get(region as usize)
-                .ok_or("Select an Azure region.")?
-                .clone(),
+            azure_endpoint: text(self.endpoint)?.trim().to_owned(),
         };
         config.validate()?;
         Ok((config, text(self.key)?.trim().to_owned()))

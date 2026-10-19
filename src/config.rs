@@ -16,7 +16,7 @@ pub struct Config {
     pub trigger: Trigger,
     pub hotkey_modifiers: u32,
     pub hotkey_key: u16,
-    pub azure_region: String,
+    pub azure_endpoint: String,
 }
 
 impl Default for Config {
@@ -25,7 +25,7 @@ impl Default for Config {
             trigger: Trigger::RightHold,
             hotkey_modifiers: 3,
             hotkey_key: b'T' as u16,
-            azure_region: String::new(),
+            azure_endpoint: String::new(),
         }
     }
 }
@@ -38,12 +38,8 @@ impl Config {
         if self.trigger == Trigger::Hotkey && self.hotkey_modifiers & 3 == 0 {
             return Err("The shortcut must include Ctrl or Alt.".into());
         }
-        if !self
-            .azure_region
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        {
-            return Err("Azure region must contain only letters, digits, or hyphens.".into());
+        if !self.azure_endpoint.is_empty() {
+            crate::translation::Endpoint::parse(&self.azure_endpoint)?;
         }
         Ok(())
     }

@@ -5,7 +5,7 @@ use windows::{
 
 use crate::AppResult;
 
-const TARGET: PCWSTR = w!("MLE/AzureTranslator");
+const TARGET: PCWSTR = w!("MLE/AzureOpenAI");
 
 pub fn read() -> AppResult<Option<String>> {
     unsafe {
@@ -29,13 +29,16 @@ pub fn read() -> AppResult<Option<String>> {
 }
 
 pub fn write(key: &str) -> AppResult<()> {
-    if key.is_empty() || key.len() > 512 || !key.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return Err(
-            "Enter a valid Azure Translator subscription key (letters and digits only).".into(),
-        );
+    if key.is_empty()
+        || key.len() > 512
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+    {
+        return Err("Enter an Azure OpenAI API key, not a URL.".into());
     }
-    let mut target: Vec<u16> = "MLE/AzureTranslator\0".encode_utf16().collect();
-    let mut username: Vec<u16> = "AzureTranslator\0".encode_utf16().collect();
+    let mut target: Vec<u16> = "MLE/AzureOpenAI\0".encode_utf16().collect();
+    let mut username: Vec<u16> = "AzureOpenAI\0".encode_utf16().collect();
     let credential = CREDENTIALW {
         Type: CRED_TYPE_GENERIC,
         TargetName: PWSTR(target.as_mut_ptr()),

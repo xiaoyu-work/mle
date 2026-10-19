@@ -1,7 +1,7 @@
 # MLE
 
 A lightweight native Windows selection translator written in Rust. Local
-English-Chinese dictionary first; optional Azure Translator for missing words
+English-Chinese dictionary first; optional Azure OpenAI GPT-4.1 mini for missing words
 and sentences. No browser engine, local language model, clipboard modifications,
 or selection history.
 
@@ -35,22 +35,32 @@ is queried through a read-only SQLite connection with a 256 KiB page-cache
 budget. It is not loaded wholesale. Inflection tables and pronunciation are
 not included; words absent from the dictionary can use online translation.
 
-To enable online translation, create an Azure Translator resource, select its
-region from the dropdown, enter its **API key**, and save. Online translation
-is available automatically whenever a key is saved; there is no separate switch.
-The region must match the Azure resource, not your computer's location. Use
-Global only for a global Translator resource. This is an Azure subscription
-key, not an arbitrary provider's token. A saved key is shown masked; clear the
-field and save to remove it. Without a key, local lookup still works.
+To enable online translation, enter your Azure OpenAI deployment's full
+**chat completions endpoint** and its **API key**, and save. For example:
+
+```text
+https://YOUR-RESOURCE.cognitiveservices.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2025-01-01-preview
+```
+
+Use the deployment name configured in Azure, not just the underlying model name.
+Online translation is available automatically whenever a key is saved; there
+is no separate switch.
+No region setting or Python SDK is required. Use the API key for that Azure
+OpenAI resource, not a Translator key or an endpoint URL. A saved key is shown
+masked; clear the field and save to remove it. Without a key, local lookup
+still works.
 
 Only explicitly triggered selections missing from the dictionary are sent to
-Microsoft Azure. Requests use the documented Translator v3 REST endpoint,
-automatic source-language detection, and Simplified Chinese (`zh-Hans`).
-Azure usage limits and charges apply. The application uses the system WinHTTP
-proxy/TLS implementation and does not bypass certificate verification.
+your configured Azure resource. Requests use Chat Completions with a
+translation-only system prompt, temperature zero, and Simplified Chinese output.
+Filtered, refused, or truncated results are reported as errors rather than
+shown as completed translations. Azure model token charges and usage limits
+apply. The application uses the system WinHTTP proxy/TLS implementation and
+does not bypass certificate verification.
 
 Keys are stored as per-user Windows generic credentials under
-`MLE/AzureTranslator`, not in source or settings. Non-secret preferences live
+`MLE/AzureOpenAI`, not in source or settings. Previously saved Translator keys
+are not reused for this different service. Non-secret preferences live
 in `%APPDATA%\MLE\settings.json`. Windows credentials are not protection against
 other malicious programs running as the same user.
 

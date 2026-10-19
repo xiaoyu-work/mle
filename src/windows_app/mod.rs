@@ -98,7 +98,7 @@ pub fn show_error(text: &str) {
 }
 
 fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
-    let mut client = None;
+    let mut client: Option<http::Client> = None;
     while let Ok(work) = receiver.recv() {
         let text = (|| -> AppResult<String> {
             let source = HWND(work.source as *mut _);
@@ -115,15 +115,22 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
             if let Some(meaning) = dictionary.lookup(&selection)? {
                 return Ok(meaning);
             }
+            if work.config.azure_endpoint.is_empty() {
+                return Err("Add your Azure OpenAI endpoint and API key in Settings.".into());
+            }
+            let endpoint = crate::translation::Endpoint::parse(&work.config.azure_endpoint)?;
             let key = credentials::read()?
-                .ok_or("Add your Azure API key in Settings to translate this text.")?;
-            if client.is_none() {
-                client = Some(http::Client::new()?);
+                .ok_or("Add your Azure OpenAI API key in Settings to translate this text.")?;
+            if client
+                .as_ref()
+                .is_none_or(|client| client.host != endpoint.host)
+            {
+                client = Some(http::Client::new(endpoint.host)?);
             }
             client
                 .as_ref()
                 .ok_or("HTTP client is unavailable.")?
-                .translate(&selection, &key, &work.config.azure_region)
+                .translate(&selection, &key, endpoint.path)
         })()
         .map_err(|e| e.to_string());
         if replies.send(Reply { id: work.id, text }).is_err() {
@@ -359,7 +366,7 @@ impl App {
 
     fn open_settings(&mut self) -> AppResult<()> {
         if self.settings.is_none() {
-            self.settings = Some(settings::Window::create(&self.config)?);
+            self.settings = Some(settings::Window::create()?);
         }
         if let Some(window) = &self.settings {
             window.load(&self.config)?;
