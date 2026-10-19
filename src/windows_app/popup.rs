@@ -89,7 +89,7 @@ pub fn format_text(body: HWND, font_size: u16, color: COLORREF) {
     let mut paragraph = PARAFORMAT2::default();
     paragraph.Base.cbSize = size_of::<PARAFORMAT2>() as u32;
     paragraph.Base.dwMask = PFM_SPACEAFTER | PFM_LINESPACING;
-    paragraph.dySpaceAfter = 90;
+    paragraph.dySpaceAfter = 0;
     paragraph.bLineSpacingRule = 0;
     send_message(
         body,
@@ -180,8 +180,7 @@ impl Window {
             }
             fit_height(
                 self.hwnd,
-                (height + theme::px(self.hwnd, 32))
-                    .clamp(theme::px(self.hwnd, 48), theme::px(self.hwnd, 480)),
+                (height + theme::px(self.hwnd, 12)).min(theme::px(self.hwnd, 480)),
             )
         })();
         send_message(self.body, WM_SETREDRAW, WPARAM(1), LPARAM(0));
@@ -229,7 +228,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
         let mut rect = RECT::default();
         GetClientRect(hwnd, &mut rect)?;
         if let Ok(body) = GetDlgItem(Some(hwnd), BODY) {
-            let margin = theme::px(hwnd, 14);
+            let margin = theme::px(hwnd, 6);
             MoveWindow(
                 body,
                 margin,
@@ -238,6 +237,17 @@ fn layout(hwnd: HWND) -> AppResult<()> {
                 (rect.bottom - margin * 2).max(1),
                 true,
             )?;
+            let text_rect = RECT {
+                right: (rect.right - margin * 2).max(1),
+                bottom: (rect.bottom - margin * 2).max(1),
+                ..Default::default()
+            };
+            send_message(
+                body,
+                EM_SETRECT,
+                WPARAM(0),
+                LPARAM((&text_rect as *const RECT) as isize),
+            );
         }
     }
     Ok(())
