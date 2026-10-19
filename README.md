@@ -13,7 +13,8 @@ subsequent launches stay in the notification area. Click the tray icon to open
 Settings, or right-click it to exit.
 
 - Select text in another application and hold the right mouse button for 500 ms.
-- Alternatively select **Custom keyboard shortcut** in Settings and press the
+  This timing is managed by the app, not a user setting.
+- Alternatively select **Keyboard shortcut** in Settings and press the
   desired combination in the shortcut box (default: Ctrl+Alt+T).
 - Ordinary short right-clicks are replayed. Right drags start after moving
   8 pixels. This interception is not identical to native input in every app;
@@ -34,11 +35,13 @@ is queried through a read-only SQLite connection with a 256 KiB page-cache
 budget. It is not loaded wholesale. Inflection tables and pronunciation are
 not included; words absent from the dictionary can use online translation.
 
-To enable online translation, create an Azure Translator resource, enter its
-**subscription key** and region (for example, `westus2`), and explicitly check
-the online translation consent box. This is an Azure API key, not an arbitrary
-provider's token. Leave the key field blank to retain a previously saved key.
-Use **Delete saved key** to remove it.
+To enable online translation, create an Azure Translator resource, select its
+region from the dropdown, enter its **API key**, and save. Online translation
+is available automatically whenever a key is saved; there is no separate switch.
+The region must match the Azure resource, not your computer's location. Use
+Global only for a global Translator resource. This is an Azure subscription
+key, not an arbitrary provider's token. A saved key is shown masked; clear the
+field and save to remove it. Without a key, local lookup still works.
 
 Only explicitly triggered selections missing from the dictionary are sent to
 Microsoft Azure. Requests use the documented Translator v3 REST endpoint,

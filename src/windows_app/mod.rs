@@ -6,7 +6,7 @@ mod settings;
 use std::{
     cell::RefCell,
     sync::{
-        atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicIsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
 };
@@ -33,6 +33,7 @@ const RESULT_EVENT: u32 = WM_APP + 3;
 const DISMISS_EVENT: u32 = WM_APP + 4;
 const INPUT_ERROR_EVENT: u32 = WM_APP + 5;
 const HOLD_TIMER: usize = 1;
+const HOLD_MS: u32 = 500;
 const POPUP_TIMER: usize = 2;
 const HOTKEY: i32 = 1;
 const ESCAPE_HOTKEY: i32 = 2;
@@ -43,7 +44,6 @@ const REPLAY: usize = 0x4d4c4531;
 static HOST: AtomicIsize = AtomicIsize::new(0);
 static POPUP: AtomicIsize = AtomicIsize::new(0);
 static RIGHT_HOLD: AtomicBool = AtomicBool::new(true);
-static HOLD_MS: AtomicU32 = AtomicU32::new(500);
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
@@ -103,7 +103,9 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
         let text = (|| -> AppResult<String> {
             let source = HWND(work.source as *mut _);
             if unsafe { GetForegroundWindow() } != source {
-                return Err("The active application changed. Select the text and try again.".into());
+                return Err(
+                    "The active application changed. Select the text and try again.".into(),
+                );
             }
             let selection = selection::Selection::new()?.text()?;
             if unsafe { GetForegroundWindow() } != source {
@@ -113,16 +115,17 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
             if let Some(meaning) = dictionary.lookup(&selection)? {
                 return Ok(meaning);
             }
-            if !work.config.allow_online {
-                return Err("No local entry. Enable online translation in Settings to translate this text. Selected text will be sent to Microsoft Azure.".into());
-            }
-            let key = credentials::read()?.ok_or("Add your Azure Translator subscription key in Settings.")?;
+            let key = credentials::read()?
+                .ok_or("Add your Azure API key in Settings to translate this text.")?;
             if client.is_none() {
                 client = Some(http::Client::new()?);
             }
-            client.as_ref().ok_or("HTTP client is unavailable.")?
+            client
+                .as_ref()
+                .ok_or("HTTP client is unavailable.")?
                 .translate(&selection, &key, &work.config.azure_region)
-        })().map_err(|e| e.to_string());
+        })()
+        .map_err(|e| e.to_string());
         if replies.send(Reply { id: work.id, text }).is_err() {
             break;
         }
@@ -340,7 +343,6 @@ impl App {
                 self.hotkey_registered = false;
             }
             RIGHT_HOLD.store(self.config.trigger == Trigger::RightHold, Ordering::Relaxed);
-            HOLD_MS.store(self.config.hold_ms, Ordering::Relaxed);
             if self.config.trigger == Trigger::Hotkey {
                 RegisterHotKey(
                     Some(self.host),
@@ -360,6 +362,7 @@ impl App {
             self.settings = Some(settings::Window::create(&self.config)?);
         }
         if let Some(window) = &self.settings {
+            window.load(&self.config)?;
             unsafe {
                 let _ = ShowWindow(window.hwnd, SW_SHOW);
                 let _ = SetForegroundWindow(window.hwnd);
@@ -714,13 +717,7 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
                     consumed: false,
                 }
             });
-            if SetTimer(
-                Some(host),
-                HOLD_TIMER,
-                HOLD_MS.load(Ordering::Relaxed),
-                None,
-            ) == 0
-            {
+            if SetTimer(Some(host), HOLD_TIMER, HOLD_MS, None) == 0 {
                 GESTURE.with(|state| state.borrow_mut().start = None);
                 let _ = PostMessageW(Some(host), INPUT_ERROR_EVENT, WPARAM(0), LPARAM(0));
                 return CallNextHookEx(None, code, wp, lp);

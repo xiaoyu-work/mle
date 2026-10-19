@@ -15,17 +15,45 @@ use crate::{
 };
 
 const SAVE: usize = 200;
-const REMOVE_KEY: usize = 201;
+const TRIGGER: usize = 210;
+const REGIONS: &[(&str, &str)] = &[
+    ("Global", ""),
+    ("East US", "eastus"),
+    ("East US 2", "eastus2"),
+    ("West US", "westus"),
+    ("West US 2", "westus2"),
+    ("West US 3", "westus3"),
+    ("Central US", "centralus"),
+    ("South Central US", "southcentralus"),
+    ("Canada Central", "canadacentral"),
+    ("Brazil South", "brazilsouth"),
+    ("North Europe", "northeurope"),
+    ("West Europe", "westeurope"),
+    ("UK South", "uksouth"),
+    ("France Central", "francecentral"),
+    ("Switzerland North", "switzerlandnorth"),
+    ("East Asia", "eastasia"),
+    ("Southeast Asia", "southeastasia"),
+    ("Japan East", "japaneast"),
+    ("Japan West", "japanwest"),
+    ("Korea Central", "koreacentral"),
+    ("Central India", "centralindia"),
+    ("Australia East", "australiaeast"),
+    ("South Africa North", "southafricanorth"),
+    ("UAE North", "uaenorth"),
+];
 
 pub struct Window {
     pub hwnd: HWND,
     trigger: HWND,
-    duration: HWND,
+    hotkey_label: HWND,
     hotkey: HWND,
+    region_label: HWND,
     region: HWND,
+    regions: Vec<String>,
+    key_label: HWND,
     key: HWND,
-    online: HWND,
-    key_status: HWND,
+    save: HWND,
 }
 
 impl Window {
@@ -47,8 +75,8 @@ impl Window {
                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                620 * scale / 96,
-                580 * scale / 96,
+                520 * scale / 96,
+                250 * scale / 96,
                 None,
                 None,
                 Some(instance.into()),
@@ -86,208 +114,216 @@ impl Window {
                 );
                 Ok(child)
             };
-            let label = |text: &str, x, y, width, height| {
-                create(w!("STATIC"), text, WINDOW_STYLE(0), x, y, width, height, 0)
-            };
-            label(
-                "Translate selected text into Simplified Chinese",
-                24,
-                20,
-                550,
-                24,
-            )?;
-            label("Trigger", 24, 62, 160, 22)?;
+            let label =
+                |text: &str, y| create(w!("STATIC"), text, WINDOW_STYLE(0), 24, y + 4, 104, 22, 0);
+            label("Trigger", 24)?;
             let trigger = create(
                 w!("COMBOBOX"),
                 "",
-                WS_TABSTOP | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
-                198,
-                58,
-                365,
+                WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                136,
+                24,
+                336,
                 120,
-                210,
+                TRIGGER,
             )?;
-            for item in ["Hold right mouse button", "Custom keyboard shortcut"] {
-                let text = wide(item);
-                send_message(
-                    trigger,
-                    CB_ADDSTRING,
-                    WPARAM(0),
-                    LPARAM(text.as_ptr() as isize),
-                );
+            for item in ["Hold right mouse button", "Keyboard shortcut"] {
+                add_item(trigger, item)?;
             }
-            send_message(
-                trigger,
-                CB_SETCURSEL,
-                WPARAM(usize::from(config.trigger == Trigger::Hotkey)),
-                LPARAM(0),
-            );
-            label("Hold duration (250-2000 ms)", 24, 103, 172, 24)?;
-            let duration = create(
-                w!("EDIT"),
-                &config.hold_ms.to_string(),
-                WS_TABSTOP | WS_BORDER | WINDOW_STYLE(ES_NUMBER as u32 | ES_AUTOHSCROLL as u32),
-                198,
-                100,
-                100,
-                26,
-                211,
-            )?;
-            label("Shortcut (press keys here)", 24, 145, 172, 24)?;
+            let hotkey_label = label("Shortcut", 68)?;
             let hotkey = create(
                 w!("msctls_hotkey32"),
                 "",
                 WS_TABSTOP | WS_BORDER,
-                198,
-                140,
-                365,
+                136,
+                68,
+                336,
                 28,
                 212,
             )?;
-            let mut modifiers = 0u16;
-            if config.hotkey_modifiers & 1 != 0 {
-                modifiers |= HOTKEYF_ALT as u16;
-            }
-            if config.hotkey_modifiers & 2 != 0 {
-                modifiers |= HOTKEYF_CONTROL as u16;
-            }
-            if config.hotkey_modifiers & 4 != 0 {
-                modifiers |= HOTKEYF_SHIFT as u16;
-            }
-            send_message(
-                hotkey,
-                HKM_SETHOTKEY,
-                WPARAM((config.hotkey_key | modifiers << 8) as usize),
-                LPARAM(0),
-            );
-            label("Azure region (e.g. westus2)", 24, 195, 172, 24)?;
+            let region_label = label("Azure region", 112)?;
             let region = create(
-                w!("EDIT"),
-                &config.azure_region,
-                WS_TABSTOP | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-                198,
-                190,
-                365,
-                28,
+                w!("COMBOBOX"),
+                "",
+                WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                136,
+                112,
+                336,
+                240,
                 213,
             )?;
-            label("Azure subscription key", 24, 236, 172, 24)?;
+            let mut regions = Vec::new();
+            for &(label, code) in REGIONS {
+                let display = if code.is_empty() {
+                    label.to_owned()
+                } else {
+                    format!("{label} ({code})")
+                };
+                add_item(region, &display)?;
+                regions.push(code.to_owned());
+            }
+            // Retain an existing region even if it is not in the preset list.
+            if !regions.contains(&config.azure_region) {
+                add_item(region, &config.azure_region)?;
+                regions.push(config.azure_region.clone());
+            }
+            let key_label = label("API key", 156)?;
             let key = create(
                 w!("EDIT"),
                 "",
                 WS_TABSTOP | WS_BORDER | WINDOW_STYLE(ES_PASSWORD as u32 | ES_AUTOHSCROLL as u32),
-                198,
-                232,
-                365,
+                136,
+                156,
+                336,
                 28,
                 214,
             )?;
             send_message(key, EM_SETLIMITTEXT, WPARAM(512), LPARAM(0));
-            let stored = credentials::read()?.is_some();
-            let status = if stored {
-                "A key is saved. Leave the field blank to keep it."
-            } else {
-                "No key saved. Local dictionary works without a key."
-            };
-            let key_status = label(status, 24, 276, 540, 24)?;
-            create(
-                w!("BUTTON"),
-                "Delete saved key",
-                WS_TABSTOP,
-                198,
-                306,
-                165,
-                28,
-                REMOVE_KEY,
-            )?;
-            let online = create(
-                w!("BUTTON"),
-                "Allow online translation when local lookup has no entry",
-                WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
-                24,
-                360,
-                545,
-                26,
-                215,
-            )?;
-            send_message(
-                online,
-                BM_SETCHECK,
-                WPARAM(usize::from(config.allow_online)),
-                LPARAM(0),
-            );
-            label(
-                "Online mode sends selected text to Microsoft Azure only when triggered.\nNo selection history is saved. Keys stay in Windows Credential Manager.",
-                24,
-                396,
-                550,
-                46,
-            )?;
-            label(
-                "English words: local dictionary. Other text: Azure if enabled.\nEsc or an outside click closes the translation popup.",
-                24,
-                451,
-                550,
-                40,
-            )?;
-            create(
+            let save = create(
                 w!("BUTTON"),
                 "Save",
                 WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-                458,
-                496,
-                105,
+                372,
+                204,
+                100,
                 30,
                 SAVE,
             )?;
             Ok(Self {
                 hwnd,
                 trigger,
-                duration,
+                hotkey_label,
                 hotkey,
+                region_label,
                 region,
+                regions,
+                key_label,
                 key,
-                online,
-                key_status,
+                save,
             })
         }
     }
 
-    fn read(&self) -> AppResult<(Config, String)> {
-        {
-            let trigger = match send_message(self.trigger, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 {
-                0 => Trigger::RightHold,
-                1 => Trigger::Hotkey,
-                _ => return Err("Select a trigger.".into()),
-            };
-            let hotkey = send_message(self.hotkey, HKM_GETHOTKEY, WPARAM(0), LPARAM(0)).0 as u16;
-            let flags = hotkey >> 8;
-            let mut modifiers = 0;
-            if flags & HOTKEYF_ALT as u16 != 0 {
-                modifiers |= 1;
-            }
-            if flags & HOTKEYF_CONTROL as u16 != 0 {
-                modifiers |= 2;
-            }
-            if flags & HOTKEYF_SHIFT as u16 != 0 {
-                modifiers |= 4;
-            }
-            let config = Config {
-                trigger,
-                hold_ms: text(self.duration)?
-                    .trim()
-                    .parse()
-                    .map_err(|_| "Enter a numeric hold duration.")?,
-                hotkey_modifiers: modifiers,
-                hotkey_key: hotkey & 0xff,
-                azure_region: text(self.region)?.trim().to_owned(),
-                allow_online: send_message(self.online, BM_GETCHECK, WPARAM(0), LPARAM(0)).0
-                    == BST_CHECKED.0 as isize,
-            };
-            config.validate()?;
-            Ok((config, text(self.key)?.trim().to_owned()))
+    pub fn load(&self, config: &Config) -> AppResult<()> {
+        send_message(
+            self.trigger,
+            CB_SETCURSEL,
+            WPARAM(usize::from(config.trigger == Trigger::Hotkey)),
+            LPARAM(0),
+        );
+        let mut modifiers = 0u16;
+        if config.hotkey_modifiers & 1 != 0 {
+            modifiers |= HOTKEYF_ALT as u16;
         }
+        if config.hotkey_modifiers & 2 != 0 {
+            modifiers |= HOTKEYF_CONTROL as u16;
+        }
+        if config.hotkey_modifiers & 4 != 0 {
+            modifiers |= HOTKEYF_SHIFT as u16;
+        }
+        send_message(
+            self.hotkey,
+            HKM_SETHOTKEY,
+            WPARAM((config.hotkey_key | modifiers << 8) as usize),
+            LPARAM(0),
+        );
+        let region = self
+            .regions
+            .iter()
+            .position(|code| code == &config.azure_region)
+            .ok_or("The saved Azure region is not available.")?;
+        send_message(self.region, CB_SETCURSEL, WPARAM(region), LPARAM(0));
+        let key = wide(&credentials::read()?.unwrap_or_default());
+        unsafe {
+            SetWindowTextW(self.key, PCWSTR(key.as_ptr()))?;
+        }
+        self.layout()
     }
+
+    fn layout(&self) -> AppResult<()> {
+        let shortcut = send_message(self.trigger, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 == 1;
+        let offset = if shortcut { 44 } else { 0 };
+        unsafe {
+            let scale = GetDpiForWindow(self.hwnd) as i32;
+            let show = if shortcut { SW_SHOW } else { SW_HIDE };
+            let _ = ShowWindow(self.hotkey_label, show);
+            let _ = ShowWindow(self.hotkey, show);
+            for (control, x, y, width, height) in [
+                (self.region_label, 24, 72 + offset, 104, 22),
+                (self.region, 136, 68 + offset, 336, 240),
+                (self.key_label, 24, 116 + offset, 104, 22),
+                (self.key, 136, 112 + offset, 336, 28),
+                (self.save, 372, 160 + offset, 100, 30),
+            ] {
+                MoveWindow(
+                    control,
+                    x * scale / 96,
+                    y * scale / 96,
+                    width * scale / 96,
+                    height * scale / 96,
+                    true,
+                )?;
+            }
+            SetWindowPos(
+                self.hwnd,
+                None,
+                0,
+                0,
+                520 * scale / 96,
+                (250 + offset) * scale / 96,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn read(&self) -> AppResult<(Config, String)> {
+        let trigger = match send_message(self.trigger, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 {
+            0 => Trigger::RightHold,
+            1 => Trigger::Hotkey,
+            _ => return Err("Select a trigger.".into()),
+        };
+        let hotkey = send_message(self.hotkey, HKM_GETHOTKEY, WPARAM(0), LPARAM(0)).0 as u16;
+        let flags = hotkey >> 8;
+        let mut modifiers = 0;
+        if flags & HOTKEYF_ALT as u16 != 0 {
+            modifiers |= 1;
+        }
+        if flags & HOTKEYF_CONTROL as u16 != 0 {
+            modifiers |= 2;
+        }
+        if flags & HOTKEYF_SHIFT as u16 != 0 {
+            modifiers |= 4;
+        }
+        let region = send_message(self.region, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
+        let config = Config {
+            trigger,
+            hotkey_modifiers: modifiers,
+            hotkey_key: hotkey & 0xff,
+            azure_region: self
+                .regions
+                .get(region as usize)
+                .ok_or("Select an Azure region.")?
+                .clone(),
+        };
+        config.validate()?;
+        Ok((config, text(self.key)?.trim().to_owned()))
+    }
+}
+
+fn add_item(combo: HWND, item: &str) -> AppResult<()> {
+    let item = wide(item);
+    if send_message(
+        combo,
+        CB_ADDSTRING,
+        WPARAM(0),
+        LPARAM(item.as_ptr() as isize),
+    )
+    .0 < 0
+    {
+        return Err("Could not populate settings choices.".into());
+    }
+    Ok(())
 }
 
 fn text(hwnd: HWND) -> AppResult<String> {
@@ -306,16 +342,13 @@ fn save() -> AppResult<()> {
         let window = app.settings.as_ref().ok_or("Settings are not open.")?;
         let (config, key) = window.read()?;
         let old_key = credentials::read()?;
-        if config.allow_online && key.is_empty() && old_key.is_none() {
-            return Err(
-                "Enter an Azure subscription key before enabling online translation.".into(),
-            );
-        }
         let previous = app.config.clone();
         app.config = config;
         let result = (|| -> AppResult<()> {
             app.install_trigger()?;
-            if !key.is_empty() {
+            if key.is_empty() {
+                credentials::delete()?;
+            } else {
                 credentials::write(&key)?;
             }
             app.config.save()?;
@@ -325,28 +358,37 @@ fn save() -> AppResult<()> {
             app.config = previous;
             app.install_trigger()
                 .map_err(|restore| format!("{error}\nCould not restore trigger: {restore}"))?;
-            if !key.is_empty() {
-                match old_key {
-                    Some(key) => credentials::write(&key)?,
-                    None => credentials::delete()?,
-                }
+            match old_key {
+                Some(key) => credentials::write(&key)?,
+                None => credentials::delete()?,
             }
             return Err(error);
         }
         if let Some(window) = app.settings.as_ref() {
             unsafe {
                 SetWindowTextW(window.key, w!(""))?;
-                let status = if credentials::read()?.is_some() {
-                    w!("A key is saved. Leave the field blank to keep it.")
-                } else {
-                    w!("No key saved. Local dictionary works without a key.")
-                };
-                SetWindowTextW(window.key_status, status)?;
                 let _ = ShowWindow(window.hwnd, SW_HIDE);
             }
         }
         Ok(())
     })
+}
+
+fn hide(hwnd: HWND) {
+    let result = APP.with(|cell| -> windows::core::Result<()> {
+        if let Some(window) = cell.borrow().as_ref().and_then(|app| app.settings.as_ref()) {
+            unsafe {
+                SetWindowTextW(window.key, w!(""))?;
+            }
+        }
+        Ok(())
+    });
+    if let Err(error) = result {
+        show_error(&error.to_string());
+    }
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
 }
 
 pub unsafe extern "system" fn window_proc(
@@ -357,50 +399,32 @@ pub unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     unsafe {
         match message {
+            WM_COMMAND if wp.0 & 0xffff == TRIGGER && (wp.0 >> 16) as u32 == CBN_SELCHANGE => {
+                let result = APP.with(|cell| -> AppResult<()> {
+                    if let Some(window) =
+                        cell.borrow().as_ref().and_then(|app| app.settings.as_ref())
+                    {
+                        window.layout()?;
+                    }
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    show_error(&error.to_string());
+                }
+                LRESULT(0)
+            }
             WM_COMMAND if wp.0 & 0xffff == SAVE || wp.0 & 0xffff == IDOK.0 as usize => {
                 if let Err(error) = save() {
                     show_error(&error.to_string());
                 }
                 LRESULT(0)
             }
-            WM_COMMAND if wp.0 & 0xffff == REMOVE_KEY => {
-                if MessageBoxW(
-                    Some(hwnd),
-                    w!("Delete the saved Azure key? Online translation will be disabled."),
-                    w!("MLE"),
-                    MB_YESNO | MB_ICONQUESTION,
-                ) == IDYES
-                {
-                    let result = (|| -> AppResult<()> {
-                        credentials::delete()?;
-                        APP.with(|cell| -> AppResult<()> {
-                            if let Some(app) = cell.borrow_mut().as_mut() {
-                                app.config.allow_online = false;
-                                app.config.save()?;
-                                if let Some(window) = app.settings.as_ref() {
-                                    send_message(window.online, BM_SETCHECK, WPARAM(0), LPARAM(0));
-                                    SetWindowTextW(window.key, w!(""))?;
-                                    SetWindowTextW(
-                                        window.key_status,
-                                        w!("No key saved. Local dictionary works without a key."),
-                                    )?;
-                                }
-                            }
-                            Ok(())
-                        })
-                    })();
-                    if let Err(error) = result {
-                        show_error(&error.to_string());
-                    }
-                }
-                LRESULT(0)
-            }
             WM_COMMAND if wp.0 & 0xffff == IDCANCEL.0 as usize => {
-                let _ = ShowWindow(hwnd, SW_HIDE);
+                hide(hwnd);
                 LRESULT(0)
             }
             WM_CLOSE => {
-                let _ = ShowWindow(hwnd, SW_HIDE);
+                hide(hwnd);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, message, wp, lp),

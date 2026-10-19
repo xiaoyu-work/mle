@@ -14,31 +14,24 @@ pub enum Trigger {
 #[serde(default)]
 pub struct Config {
     pub trigger: Trigger,
-    pub hold_ms: u32,
     pub hotkey_modifiers: u32,
     pub hotkey_key: u16,
     pub azure_region: String,
-    pub allow_online: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             trigger: Trigger::RightHold,
-            hold_ms: 500,
             hotkey_modifiers: 3,
             hotkey_key: b'T' as u16,
             azure_region: String::new(),
-            allow_online: false,
         }
     }
 }
 
 impl Config {
     pub fn validate(&self) -> AppResult<()> {
-        if !(250..=2000).contains(&self.hold_ms) {
-            return Err("Hold duration must be between 250 and 2000 ms.".into());
-        }
         if self.hotkey_key == 0 || self.hotkey_modifiers & !7 != 0 {
             return Err("Choose a valid shortcut using Ctrl, Alt, or Shift.".into());
         }
