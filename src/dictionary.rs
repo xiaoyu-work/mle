@@ -5,6 +5,32 @@ use crate::AppResult;
 
 pub struct Dictionary(Connection);
 
+pub struct Sense<'a> {
+    pub domain: Option<&'a str>,
+    pub meaning: &'a str,
+}
+
+pub fn senses(meaning: &str) -> Vec<Sense<'_>> {
+    let mut senses = Vec::new();
+    for line in meaning
+        .split(['\n', ';', '\u{ff1b}'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let (domain, meaning) = match line.strip_prefix('[').and_then(|line| line.split_once(']')) {
+            Some((domain, meaning)) if !meaning.trim().is_empty() => (Some(domain), meaning.trim()),
+            _ => (None, line),
+        };
+        if !senses
+            .iter()
+            .any(|sense: &Sense<'_>| sense.domain == domain && sense.meaning == meaning)
+        {
+            senses.push(Sense { domain, meaning });
+        }
+    }
+    senses
+}
+
 impl Dictionary {
     pub fn open(path: &Path) -> AppResult<Self> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;

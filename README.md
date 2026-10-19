@@ -2,7 +2,7 @@
 
 A lightweight native Windows selection translator written in Rust. Local
 English-Chinese dictionary first; optional Azure OpenAI GPT-4.1 mini for missing words
-and sentences. No browser engine, local language model, clipboard modifications,
+and sentences. No browser engine, local language model, clipboard-based capture,
 or selection history.
 
 ## Run
@@ -21,6 +21,8 @@ Settings, or right-click it to exit.
   keyboard mode is recommended for games and unusual mouse interactions.
 - Results appear without taking focus. Esc, an outside click, or changing the
   foreground application dismisses the popup. Long results can be scrolled.
+- Dictionary entries are separated into numbered meanings, with domain labels
+  where available. **Copy** explicitly copies the displayed result to the clipboard.
 
 Selection capture uses UI Automation. Compatibility depends on the source
 application's accessibility implementation. Image text, password fields, secure
@@ -47,7 +49,8 @@ Online translation is available automatically whenever a key is saved; there
 is no separate switch.
 No region setting or Python SDK is required. Use the API key for that Azure
 OpenAI resource, not a Translator key or an endpoint URL. A saved key is shown
-masked; clear the field and save to remove it. Without a key, local lookup
+masked; **Show** reveals it only while Settings is open. Clear the field and save
+to remove it. **Cancel** discards edits. Without a key, local lookup
 still works.
 
 Only explicitly triggered selections missing from the dictionary are sent to
@@ -72,6 +75,10 @@ Requires stable Rust and the MSVC C++ build tools / Windows SDK.
 cargo check
 .\tools\package.ps1
 ```
+
+The executable, tray, and windows use the original icon in `assets\mle.ico`.
+Its vector source is `assets\mle.svg`; regenerate the multi-resolution icon with
+`.\tools\build_icon.ps1` (Windows drawing APIs, no extra image tools).
 
 The generated dictionary is included. To regenerate it, use Python 3:
 

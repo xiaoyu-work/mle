@@ -1,7 +1,9 @@
 mod credentials;
 mod http;
+mod popup;
 mod selection;
 mod settings;
+mod theme;
 
 use std::{
     cell::RefCell,
@@ -32,6 +34,7 @@ const TRIGGER_EVENT: u32 = WM_APP + 2;
 const RESULT_EVENT: u32 = WM_APP + 3;
 const DISMISS_EVENT: u32 = WM_APP + 4;
 const INPUT_ERROR_EVENT: u32 = WM_APP + 5;
+const UI_ERROR_EVENT: u32 = WM_APP + 6;
 const HOLD_TIMER: usize = 1;
 const HOLD_MS: u32 = 500;
 const POPUP_TIMER: usize = 2;
@@ -48,6 +51,7 @@ static RIGHT_HOLD: AtomicBool = AtomicBool::new(true);
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     static GESTURE: RefCell<Gesture> = RefCell::new(Gesture::default());
+    static UI_ERRORS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Default)]
@@ -64,13 +68,13 @@ struct Work {
 
 struct Reply {
     id: u64,
-    text: Result<String, String>,
+    source: String,
+    text: Result<popup::Content, String>,
 }
 
 struct App {
     host: HWND,
-    popup: HWND,
-    popup_text: HWND,
+    popup: popup::Window,
     settings: Option<settings::Window>,
     config: Config,
     hook: HHOOK,
@@ -97,10 +101,25 @@ pub fn show_error(text: &str) {
     }
 }
 
+fn defer_error(error: String) {
+    UI_ERRORS.with(|cell| cell.borrow_mut().push(error));
+    unsafe {
+        if let Err(post_error) = PostMessageW(
+            Some(HWND(HOST.load(Ordering::Relaxed) as *mut _)),
+            UI_ERROR_EVENT,
+            WPARAM(0),
+            LPARAM(0),
+        ) {
+            eprintln!("Could not deliver UI error: {post_error}");
+        }
+    }
+}
+
 fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
     let mut client: Option<http::Client> = None;
     while let Ok(work) = receiver.recv() {
-        let text = (|| -> AppResult<String> {
+        let mut selected_text = String::new();
+        let text = (|| -> AppResult<popup::Content> {
             let source = HWND(work.source as *mut _);
             if unsafe { GetForegroundWindow() } != source {
                 return Err(
@@ -108,12 +127,13 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
                 );
             }
             let selection = selection::Selection::new()?.text()?;
+            selected_text.clone_from(&selection);
             if unsafe { GetForegroundWindow() } != source {
                 return Err("The active application changed while reading the selection.".into());
             }
             let dictionary = Dictionary::open(&crate::dictionary::default_path()?)?;
             if let Some(meaning) = dictionary.lookup(&selection)? {
-                return Ok(meaning);
+                return Ok(popup::Content::Dictionary(meaning));
             }
             if work.config.azure_endpoint.is_empty() {
                 return Err("Add your Azure OpenAI endpoint and API key in Settings.".into());
@@ -131,9 +151,17 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
                 .as_ref()
                 .ok_or("HTTP client is unavailable.")?
                 .translate(&selection, &key, endpoint.path)
+                .map(popup::Content::Translation)
         })()
         .map_err(|e| e.to_string());
-        if replies.send(Reply { id: work.id, text }).is_err() {
+        if replies
+            .send(Reply {
+                id: work.id,
+                source: selected_text,
+                text,
+            })
+            .is_err()
+        {
             break;
         }
         if unsafe {
@@ -180,7 +208,7 @@ fn run_inner() -> AppResult<()> {
             ),
             (
                 w!("MLE.Popup"),
-                Some(popup_proc as unsafe extern "system" fn(_, _, _, _) -> _),
+                Some(popup::window_proc as unsafe extern "system" fn(_, _, _, _) -> _),
             ),
             (
                 w!("MLE.Settings"),
@@ -191,6 +219,7 @@ fn run_inner() -> AppResult<()> {
                 lpfnWndProc: procedure,
                 hInstance: instance.into(),
                 hCursor: cursor,
+                hIcon: theme::icon(32)?,
                 hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut _),
                 lpszClassName: name,
                 ..Default::default()
@@ -214,49 +243,12 @@ fn run_inner() -> AppResult<()> {
             None,
         )?;
         HOST.store(host.0 as isize, Ordering::Relaxed);
-        let popup = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            w!("MLE.Popup"),
-            w!("MLE translation"),
-            WS_POPUP | WS_BORDER,
-            0,
-            0,
-            480,
-            240,
-            Some(host),
-            None,
-            Some(instance.into()),
-            None,
-        )?;
-        POPUP.store(popup.0 as isize, Ordering::Relaxed);
-        let popup_text = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("EDIT"),
-            w!(""),
-            WS_CHILD
-                | WS_VISIBLE
-                | WS_VSCROLL
-                | WINDOW_STYLE(ES_MULTILINE as u32 | ES_READONLY as u32 | ES_AUTOVSCROLL as u32),
-            12,
-            12,
-            450,
-            210,
-            Some(popup),
-            None,
-            Some(instance.into()),
-            None,
-        )?;
-        send_message(
-            popup_text,
-            WM_SETFONT,
-            WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize),
-            LPARAM(1),
-        );
+        let popup = popup::Window::create(host)?;
+        POPUP.store(popup.hwnd.0 as isize, Ordering::Relaxed);
         let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(instance.into()), 0)?;
         let mut app = App {
             host,
             popup,
-            popup_text,
             settings: None,
             config,
             hook,
@@ -331,7 +323,7 @@ impl App {
                 uID: 1,
                 uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                 uCallbackMessage: TRAY_EVENT,
-                hIcon: LoadIconW(None, IDI_INFORMATION)?,
+                hIcon: theme::icon(16)?,
                 ..Default::default()
             };
             let tip = wide("MLE - selection translator");
@@ -383,14 +375,14 @@ impl App {
         self.popup_visible = false;
         unsafe {
             let _ = UnregisterHotKey(Some(self.host), ESCAPE_HOTKEY);
-            let _ = ShowWindow(self.popup, SW_HIDE);
+            let _ = ShowWindow(self.popup.hwnd, SW_HIDE);
             let _ = KillTimer(Some(self.host), POPUP_TIMER);
         }
     }
 
     fn trigger(&mut self) -> AppResult<()> {
         let source = unsafe { GetForegroundWindow() };
-        if source == self.popup
+        if source == self.popup.hwnd
             || self
                 .settings
                 .as_ref()
@@ -422,8 +414,6 @@ impl App {
         }
         self.source = source;
         unsafe {
-            let text = wide("Looking up selected text...");
-            SetWindowTextW(self.popup_text, PCWSTR(text.as_ptr()))?;
             let mut point = POINT::default();
             GetCursorPos(&mut point)?;
             let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -434,9 +424,9 @@ impl App {
             if !GetMonitorInfoW(monitor, &mut info).as_bool() {
                 return Err(windows::core::Error::from_thread().into());
             }
-            let dpi = GetDpiForWindow(self.popup) as i32;
-            let width = 480 * dpi / 96;
-            let height = 240 * dpi / 96;
+            let dpi = GetDpiForWindow(self.popup.hwnd) as i32;
+            let width = (480 * dpi / 96).min(info.rcWork.right - info.rcWork.left);
+            let height = (280 * dpi / 96).min(info.rcWork.bottom - info.rcWork.top);
             let x = (point.x + 16).clamp(
                 info.rcWork.left,
                 (info.rcWork.right - width).max(info.rcWork.left),
@@ -446,7 +436,7 @@ impl App {
                 (info.rcWork.bottom - height).max(info.rcWork.top),
             );
             SetWindowPos(
-                self.popup,
+                self.popup.hwnd,
                 Some(HWND_TOPMOST),
                 x,
                 y,
@@ -454,6 +444,7 @@ impl App {
                 height,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             )?;
+            self.popup.render("", &popup::Content::Loading)?;
             self.popup_visible = true;
             if SetTimer(Some(self.host), POPUP_TIMER, 100, None) == 0 {
                 return Err("Could not start popup dismissal timer.".into());
@@ -465,13 +456,11 @@ impl App {
     fn receive(&mut self) -> AppResult<()> {
         while let Ok(reply) = self.replies.try_recv() {
             if reply.id == self.generation && self.popup_visible {
-                let text = wide(&match reply.text {
-                    Ok(text) => text,
-                    Err(error) => format!("MLE: {error}"),
-                });
-                unsafe {
-                    SetWindowTextW(self.popup_text, PCWSTR(text.as_ptr()))?;
-                }
+                let content = match reply.text {
+                    Ok(content) => content,
+                    Err(error) => popup::Content::Error(error),
+                };
+                self.popup.render(&reply.source, &content)?;
             }
         }
         Ok(())
@@ -554,6 +543,12 @@ unsafe extern "system" fn host_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
             INPUT_ERROR_EVENT => show_error(
                 "Windows blocked a replayed right click. Use keyboard shortcut mode for this application.",
             ),
+            UI_ERROR_EVENT => {
+                let errors = UI_ERRORS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+                for error in errors {
+                    show_error(&error);
+                }
+            }
             TRAY_EVENT => {
                 if lp.0 as u32 == WM_RBUTTONUP {
                     let result = (|| -> AppResult<()> {
@@ -594,42 +589,6 @@ unsafe extern "system" fn host_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
             _ => return DefWindowProcW(hwnd, message, wp, lp),
         }
         LRESULT(0)
-    }
-}
-
-unsafe extern "system" fn popup_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    unsafe {
-        match message {
-            WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-            WM_SIZE => {
-                // The popup has exactly one child; avoid borrowing app state in nested messages.
-                if let Ok(child) = GetWindow(hwnd, GW_CHILD) {
-                    let mut rect = RECT::default();
-                    if GetClientRect(hwnd, &mut rect).is_ok() {
-                        let margin = 12 * GetDpiForWindow(hwnd) as i32 / 96;
-                        let _ = MoveWindow(
-                            child,
-                            margin,
-                            margin,
-                            (rect.right - margin * 2).max(1),
-                            (rect.bottom - margin * 2).max(1),
-                            true,
-                        );
-                    }
-                }
-                LRESULT(0)
-            }
-            WM_CLOSE => {
-                let _ = PostMessageW(
-                    Some(HWND(HOST.load(Ordering::Relaxed) as *mut _)),
-                    DISMISS_EVENT,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, message, wp, lp),
-        }
     }
 }
 
