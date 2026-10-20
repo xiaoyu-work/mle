@@ -347,10 +347,7 @@ impl App {
                 self.hotkey_registered = false;
             }
             RIGHT_HOLD.store(self.config.trigger == Trigger::RightHold, Ordering::Relaxed);
-            shortcut::configure(
-                self.config.trigger == Trigger::Hotkey && self.config.hotkey_double_ctrl,
-            );
-            if self.config.trigger == Trigger::Hotkey && !self.config.hotkey_double_ctrl {
+            if self.config.trigger == Trigger::Hotkey {
                 RegisterHotKey(
                     Some(self.host),
                     HOTKEY,
@@ -669,9 +666,6 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         }
         let host = HWND(HOST.load(Ordering::Relaxed) as *mut _);
         let event = wp.0 as u32;
-        if matches!(event, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN) {
-            shortcut::interrupt();
-        }
         if event == WM_MOUSEMOVE && GESTURE.with(|state| state.borrow().start.is_none()) {
             return CallNextHookEx(None, code, wp, lp);
         }

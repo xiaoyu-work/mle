@@ -46,7 +46,7 @@ thread_local! {
     static LOGIN_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SAVED_PROVIDER: std::cell::Cell<Provider> = const { std::cell::Cell::new(Provider::Azure) };
     static SHORTCUT_VALUE: std::cell::Cell<shortcut::Shortcut> = const {
-        std::cell::Cell::new(shortcut::Shortcut {modifiers:3,key:b'T' as u16,double_ctrl:false})
+        std::cell::Cell::new(shortcut::Shortcut {modifiers:3,key:b'T' as u16})
     };
 }
 
@@ -130,7 +130,7 @@ impl Window {
             theme::button(hotkey, theme::CHOICE);
             create(
                 w!("STATIC"),
-                "Click to record a combination, or double-tap Ctrl.",
+                "Click to record a key combination.",
                 WINDOW_STYLE(0),
                 SHORTCUT_STATUS,
             )?;
@@ -265,7 +265,6 @@ impl Window {
             },
             hotkey_modifiers: hotkey.modifiers,
             hotkey_key: hotkey.key,
-            hotkey_double_ctrl: hotkey.double_ctrl,
             azure_endpoint: theme::text(self.endpoint).trim().to_owned(),
             font_size: selected_font_size(self.hwnd)?,
         };
@@ -318,11 +317,7 @@ fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
         theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
         theme::set_text(
             GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-            if value.double_ctrl {
-                "Double Ctrl: other apps' double-tap actions cannot be checked."
-            } else {
-                "Click to record a combination, or double-tap Ctrl."
-            },
+            "Click to record a key combination.",
         )
     }
 }
@@ -788,7 +783,7 @@ pub unsafe extern "system" fn window_proc(
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Press shortcut...")?;
                 theme::set_text(
                     GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-                    "Press a combination or double-tap Ctrl. Esc cancels.",
+                    "Press a key combination. Esc cancels.",
                 )
             })(),
             shortcut::RECORDED => recorded_shortcut(hwnd),

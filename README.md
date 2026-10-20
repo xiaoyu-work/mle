@@ -15,16 +15,13 @@ Settings, or right-click it to exit.
 - Select text in another application and hold the right mouse button for 500 ms.
   This timing is managed by the app, not a user setting.
 - Alternatively select **Keyboard shortcut**, click the shortcut button, then
-  press and release a combination (default: Ctrl+Alt+T), or quickly press Ctrl
-  twice. Esc cancels recording; Save applies the result. Double Ctrl uses a fixed
-  350 ms interval, ignores key auto-repeat, and does not trigger after using Ctrl
-  with another key or mouse click.
+  press and release a combination (default: Ctrl+Alt+T).
+  Esc cancels recording; Save applies the result.
 - Ordinary combinations require Ctrl, Alt, or Win. MLE checks registration
   conflicts when recording and again when saving. Windows-reserved combinations
   and core text-editing shortcuts are rejected. Windows does not expose a global
-  registry of other apps' internal shortcuts or double-tap listeners, so those
-  conflicts cannot be reliably detected. Double Ctrl does not consume normal
-  Ctrl input in other applications.
+  registry of other apps' internal shortcuts, so those conflicts cannot be
+  reliably detected.
 - Ordinary short right-clicks are replayed. Right drags start after moving
   8 pixels. This interception is not identical to native input in every app;
   keyboard mode is recommended for games and unusual mouse interactions.

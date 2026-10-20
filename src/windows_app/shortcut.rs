@@ -1,10 +1,5 @@
-use super::{HOST, TRIGGER_EVENT};
 use crate::{AppResult, config::Config};
-use std::sync::atomic::Ordering;
-use std::{
-    cell::RefCell,
-    time::{Duration, Instant},
-};
+use std::cell::RefCell;
 use windows::Win32::{
     Foundation::*,
     System::LibraryLoader::GetModuleHandleW,
@@ -12,13 +7,11 @@ use windows::Win32::{
 };
 
 pub const RECORDED: u32 = WM_APP + 22;
-const DOUBLE_TAP: Duration = Duration::from_millis(350);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
     pub modifiers: u32,
     pub key: u16,
-    pub double_ctrl: bool,
 }
 
 impl Shortcut {
@@ -26,14 +19,10 @@ impl Shortcut {
         Self {
             modifiers: config.hotkey_modifiers,
             key: config.hotkey_key,
-            double_ctrl: config.hotkey_double_ctrl,
         }
     }
 
     pub fn label(self) -> String {
-        if self.double_ctrl {
-            return "Ctrl, Ctrl".into();
-        }
         let mut parts = Vec::new();
         for (flag, name) in [(2, "Ctrl"), (1, "Alt"), (4, "Shift"), (8, "Win")] {
             if self.modifiers & flag != 0 {
@@ -58,67 +47,18 @@ impl Shortcut {
     }
 }
 
-#[derive(Default)]
-struct Tap {
-    down: Option<Instant>,
-    first: Option<(Instant, isize)>,
-    clean: bool,
-}
-impl Tap {
-    fn key(&mut self, key: u32, down: bool, foreground: HWND) -> bool {
-        if matches!(key, 0x11 | 0xa2 | 0xa3) {
-            if down {
-                if self.down.is_none() {
-                    self.down = Some(Instant::now());
-                    self.clean = true;
-                }
-            } else if let Some(start) = self.down.take() {
-                if self.clean && start.elapsed() <= DOUBLE_TAP {
-                    let now = Instant::now();
-                    if self.first.take().is_some_and(|(last, window)| {
-                        now.duration_since(last) <= DOUBLE_TAP && window == foreground.0 as isize
-                    }) {
-                        return true;
-                    }
-                    self.first = Some((now, foreground.0 as isize));
-                } else {
-                    self.first = None;
-                }
-            }
-        } else if down {
-            self.clean = false;
-            self.first = None;
-        }
-        false
-    }
-}
-
 struct Recording {
     window: isize,
     modifiers: u32,
     candidate: Option<Shortcut>,
-    tap: Tap,
     keys: [bool; 256],
     cancel: bool,
 }
 
+#[derive(Default)]
 struct State {
     recording: Option<Recording>,
     result: Option<Option<Shortcut>>,
-    enabled: bool,
-    tap: Tap,
-    keys: [bool; 256],
-}
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            recording: None,
-            result: None,
-            enabled: false,
-            tap: Tap::default(),
-            keys: [false; 256],
-        }
-    }
 }
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
@@ -145,14 +85,6 @@ impl Drop for Hook {
     }
 }
 
-pub fn configure(enabled: bool) {
-    STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        state.enabled = enabled;
-        state.tap = Tap::default();
-    });
-}
-
 pub fn record(window: HWND) {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
@@ -161,7 +93,6 @@ pub fn record(window: HWND) {
             window: window.0 as isize,
             modifiers: 0,
             candidate: None,
-            tap: Tap::default(),
             keys: [false; 256],
             cancel: false,
         });
@@ -172,36 +103,20 @@ pub fn cancel() {
     STATE.with(|state| state.borrow_mut().recording = None);
 }
 
-pub fn interrupt() {
-    STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        state.tap.clean = false;
-        state.tap.first = None;
-        if let Some(recording) = state.recording.as_mut() {
-            recording.tap.clean = false;
-            recording.tap.first = None;
-        }
-    });
-}
-
 pub fn take_result() -> Option<Option<Shortcut>> {
     STATE.with(|state| state.borrow_mut().result.take())
 }
 
 pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'static str> {
-    if shortcut.double_ctrl {
-        return Ok("Double Ctrl recorded. Other apps' double-tap actions cannot be checked.");
-    }
     let config = Config {
         hotkey_modifiers: shortcut.modifiers,
         hotkey_key: shortcut.key,
-        hotkey_double_ctrl: false,
         trigger: crate::config::Trigger::Hotkey,
         ..current.clone()
     };
     config.validate()?;
     if matches!(shortcut.key, 0x10..=0x12 | 0x5b | 0x5c | 0xa0..=0xa5) {
-        return Err("Press a key with Ctrl, Alt or Win, or double-tap Ctrl.".into());
+        return Err("Press a key with Ctrl, Alt or Win.".into());
     }
     if shortcut.key == VK_F12.0 || shortcut.modifiers & 3 == 3 && shortcut.key == VK_DELETE.0 {
         return Err("This shortcut is reserved by Windows.".into());
@@ -212,7 +127,6 @@ pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'st
         );
     }
     if current.trigger == crate::config::Trigger::Hotkey
-        && !current.hotkey_double_ctrl
         && Shortcut::from_config(current) == shortcut
     {
         return Ok("Current shortcut. Save to keep it.");
@@ -282,22 +196,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LR
                     recording.candidate = Some(Shortcut {
                         modifiers: recording.modifiers,
                         key: event.vkCode as u16,
-                        double_ctrl: false,
-                    });
-                }
-                let double = if matches!(event.vkCode, 0x11 | 0xa2 | 0xa3)
-                    && recording.modifiers & !2 != 0
-                {
-                    recording.tap = Tap::default();
-                    false
-                } else {
-                    recording.tap.key(event.vkCode, down, foreground)
-                };
-                if double {
-                    recording.candidate = Some(Shortcut {
-                        modifiers: 0,
-                        key: VK_CONTROL.0,
-                        double_ctrl: true,
                     });
                 }
                 if !down
@@ -319,30 +217,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LR
                     }
                 }
                 return true;
-            }
-            let key = event.vkCode as usize;
-            if key < 256 {
-                state.keys[key] = down;
-            }
-            if state.enabled {
-                let ctrl = matches!(event.vkCode, 0x11 | 0xa2 | 0xa3);
-                if down
-                    && ctrl
-                    && state
-                        .keys
-                        .iter()
-                        .enumerate()
-                        .any(|(key, pressed)| *pressed && !matches!(key, 0x11 | 0xa2 | 0xa3))
-                {
-                    state.tap = Tap::default();
-                } else if state.tap.key(event.vkCode, down, foreground) {
-                    let host = HWND(HOST.load(Ordering::Relaxed) as *mut _);
-                    if let Err(error) =
-                        PostMessageW(Some(host), TRIGGER_EVENT, WPARAM(0), LPARAM(0))
-                    {
-                        super::defer_error(error.to_string());
-                    }
-                }
             }
             false
         });
