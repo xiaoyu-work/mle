@@ -25,6 +25,7 @@ pub struct Config {
     pub trigger: Trigger,
     pub hotkey_modifiers: u32,
     pub hotkey_key: u16,
+    pub hotkey_double_ctrl: bool,
     pub azure_endpoint: String,
     pub font_size: u16,
 }
@@ -36,6 +37,7 @@ impl Default for Config {
             trigger: Trigger::RightHold,
             hotkey_modifiers: 3,
             hotkey_key: b'T' as u16,
+            hotkey_double_ctrl: false,
             azure_endpoint: String::new(),
             font_size: 17,
         }
@@ -47,11 +49,14 @@ impl Config {
         if !(12..=32).contains(&self.font_size) {
             return Err("Translation font size must be between 12 and 32 px.".into());
         }
-        if self.hotkey_key == 0 || self.hotkey_modifiers & !7 != 0 {
-            return Err("Choose a valid shortcut using Ctrl, Alt, or Shift.".into());
+        if self.hotkey_key == 0 || self.hotkey_key > 254 || self.hotkey_modifiers & !15 != 0 {
+            return Err("Choose a valid shortcut using Ctrl, Alt, Shift, or Win.".into());
         }
-        if self.trigger == Trigger::Hotkey && self.hotkey_modifiers & 3 == 0 {
-            return Err("The shortcut must include Ctrl or Alt.".into());
+        if self.trigger == Trigger::Hotkey
+            && !self.hotkey_double_ctrl
+            && self.hotkey_modifiers & 11 == 0
+        {
+            return Err("The shortcut must include Ctrl, Alt, or Win.".into());
         }
         if self.provider == Provider::Azure && !self.azure_endpoint.is_empty() {
             crate::translation::Endpoint::parse(&self.azure_endpoint)?;

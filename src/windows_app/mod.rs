@@ -5,6 +5,7 @@ mod popup;
 mod providers;
 mod selection;
 mod settings;
+mod shortcut;
 mod theme;
 
 use std::{
@@ -79,6 +80,7 @@ struct App {
     settings: Option<settings::Window>,
     config: Config,
     hook: HHOOK,
+    _keyboard: shortcut::Hook,
     hotkey_registered: bool,
     sender: SyncSender<Work>,
     replies: Receiver<Reply>,
@@ -246,6 +248,7 @@ fn run_inner() -> AppResult<()> {
         HOST.store(host.0 as isize, Ordering::Relaxed);
         let popup = popup::Window::create(host)?;
         POPUP.store(popup.hwnd.0 as isize, Ordering::Relaxed);
+        let keyboard = shortcut::Hook::new()?;
         let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(instance.into()), 0)?;
         let mut app = App {
             host,
@@ -253,6 +256,7 @@ fn run_inner() -> AppResult<()> {
             settings: None,
             config,
             hook,
+            _keyboard: keyboard,
             hotkey_registered: false,
             sender,
             replies,
@@ -343,7 +347,10 @@ impl App {
                 self.hotkey_registered = false;
             }
             RIGHT_HOLD.store(self.config.trigger == Trigger::RightHold, Ordering::Relaxed);
-            if self.config.trigger == Trigger::Hotkey {
+            shortcut::configure(
+                self.config.trigger == Trigger::Hotkey && self.config.hotkey_double_ctrl,
+            );
+            if self.config.trigger == Trigger::Hotkey && !self.config.hotkey_double_ctrl {
                 RegisterHotKey(
                     Some(self.host),
                     HOTKEY,
@@ -662,6 +669,9 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         }
         let host = HWND(HOST.load(Ordering::Relaxed) as *mut _);
         let event = wp.0 as u32;
+        if matches!(event, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN) {
+            shortcut::interrupt();
+        }
         if event == WM_MOUSEMOVE && GESTURE.with(|state| state.borrow().start.is_none()) {
             return CallNextHookEx(None, code, wp, lp);
         }

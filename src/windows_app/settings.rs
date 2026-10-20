@@ -10,7 +10,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use super::{APP, credentials, popup, providers, send_message, show_error, theme, wide};
+use super::{APP, credentials, popup, providers, send_message, shortcut, show_error, theme, wide};
 use crate::{
     AppResult,
     config::{Config, Provider, Trigger},
@@ -35,6 +35,7 @@ const COPILOT: i32 = 224;
 const CONNECT: i32 = 225;
 const ACCOUNT: i32 = 227;
 const ACTIVE_SOURCE: i32 = 228;
+const SHORTCUT_STATUS: i32 = 229;
 const REFRESH_DPI: u32 = WM_APP + 20;
 const ACCOUNT_DONE: u32 = WM_APP + 21;
 const TBM_GETPOS: u32 = WM_USER;
@@ -44,6 +45,9 @@ thread_local! {
     static ACCOUNT_TASK: std::cell::RefCell<Option<AccountTask>> = const { std::cell::RefCell::new(None) };
     static LOGIN_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SAVED_PROVIDER: std::cell::Cell<Provider> = const { std::cell::Cell::new(Provider::Azure) };
+    static SHORTCUT_VALUE: std::cell::Cell<shortcut::Shortcut> = const {
+        std::cell::Cell::new(shortcut::Shortcut {modifiers:3,key:b'T' as u16,double_ctrl:false})
+    };
 }
 
 pub struct Window {
@@ -117,26 +121,18 @@ impl Window {
             create(w!("STATIC"), "API key", WINDOW_STYLE(0), KEY_LABEL)?;
             create(w!("STATIC"), "", WINDOW_STYLE(0), ACCOUNT)?;
             create(w!("STATIC"), "", WINDOW_STYLE(0), ACTIVE_SOURCE)?;
-            let hotkey = create(w!("msctls_hotkey32"), "", WS_TABSTOP, SHORTCUT)?;
-            // The hotkey control adds a client edge even without WS_BORDER.
-            SetWindowLongW(
-                hotkey,
-                GWL_EXSTYLE,
-                GetWindowLongW(hotkey, GWL_EXSTYLE) & !(WS_EX_CLIENTEDGE.0 as i32),
-            );
-            SetWindowLongW(
-                hotkey,
-                GWL_STYLE,
-                GetWindowLongW(hotkey, GWL_STYLE) & !(WS_BORDER.0 as i32),
-            );
-            SetWindowPos(
-                hotkey,
-                None,
-                0,
-                0,
-                0,
-                0,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            let hotkey = create(
+                w!("BUTTON"),
+                "Ctrl+Alt+T",
+                WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
+                SHORTCUT,
+            )?;
+            theme::button(hotkey, theme::CHOICE);
+            create(
+                w!("STATIC"),
+                "Click to record a combination, or double-tap Ctrl.",
+                WINDOW_STYLE(0),
+                SHORTCUT_STATUS,
             )?;
             let endpoint = create(
                 w!("EDIT"),
@@ -209,6 +205,7 @@ impl Window {
                 RIGHT_HOLD,
                 HOTKEY,
                 SHORTCUT,
+                SHORTCUT_STATUS,
                 ENDPOINT,
                 KEY,
                 SHORTCUT_LABEL,
@@ -234,24 +231,13 @@ impl Window {
     }
 
     pub fn load(&self, config: &Config) -> AppResult<()> {
+        shortcut::cancel();
+        let shortcut = shortcut::Shortcut::from_config(config);
+        SHORTCUT_VALUE.with(|value| value.set(shortcut));
+        theme::set_text(self.hotkey, &shortcut.label())?;
+        reset_shortcut_status(self.hwnd)?;
         SAVED_PROVIDER.with(|provider| provider.set(config.provider));
         choose_trigger(self.hwnd, config.trigger == Trigger::Hotkey)?;
-        let mut modifiers = 0u16;
-        if config.hotkey_modifiers & 1 != 0 {
-            modifiers |= HOTKEYF_ALT as u16;
-        }
-        if config.hotkey_modifiers & 2 != 0 {
-            modifiers |= HOTKEYF_CONTROL as u16;
-        }
-        if config.hotkey_modifiers & 4 != 0 {
-            modifiers |= HOTKEYF_SHIFT as u16;
-        }
-        send_message(
-            self.hotkey,
-            HKM_SETHOTKEY,
-            WPARAM((config.hotkey_key | modifiers << 8) as usize),
-            LPARAM(0),
-        );
         theme::set_text(self.endpoint, &config.azure_endpoint)?;
         unsafe {
             send_message(
@@ -269,18 +255,7 @@ impl Window {
 
     fn read(&self) -> AppResult<(Config, String)> {
         let shortcut = unsafe { theme::is_selected(GetDlgItem(Some(self.hwnd), HOTKEY)?) };
-        let hotkey = send_message(self.hotkey, HKM_GETHOTKEY, WPARAM(0), LPARAM(0)).0 as u16;
-        let flags = hotkey >> 8;
-        let mut modifiers = 0;
-        if flags & HOTKEYF_ALT as u16 != 0 {
-            modifiers |= 1;
-        }
-        if flags & HOTKEYF_CONTROL as u16 != 0 {
-            modifiers |= 2;
-        }
-        if flags & HOTKEYF_SHIFT as u16 != 0 {
-            modifiers |= 4;
-        }
+        let hotkey = SHORTCUT_VALUE.with(|value| value.get());
         let config = Config {
             provider: selected_provider(self.hwnd)?,
             trigger: if shortcut {
@@ -288,8 +263,9 @@ impl Window {
             } else {
                 Trigger::RightHold
             },
-            hotkey_modifiers: modifiers,
-            hotkey_key: hotkey & 0xff,
+            hotkey_modifiers: hotkey.modifiers,
+            hotkey_key: hotkey.key,
+            hotkey_double_ctrl: hotkey.double_ctrl,
             azure_endpoint: theme::text(self.endpoint).trim().to_owned(),
             font_size: selected_font_size(self.hwnd)?,
         };
@@ -327,11 +303,58 @@ fn update_preview(hwnd: HWND) -> AppResult<()> {
 }
 
 fn choose_trigger(hwnd: HWND, shortcut: bool) -> AppResult<()> {
+    super::shortcut::cancel();
+    reset_shortcut_status(hwnd)?;
     unsafe {
         theme::select_button(GetDlgItem(Some(hwnd), RIGHT_HOLD)?, !shortcut);
         theme::select_button(GetDlgItem(Some(hwnd), HOTKEY)?, shortcut);
     }
     layout(hwnd)
+}
+
+fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
+    unsafe {
+        let value = SHORTCUT_VALUE.with(|value| value.get());
+        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
+        theme::set_text(
+            GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
+            if value.double_ctrl {
+                "Double Ctrl: other apps' double-tap actions cannot be checked."
+            } else {
+                "Click to record a combination, or double-tap Ctrl."
+            },
+        )
+    }
+}
+
+fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
+    let Some(result) = shortcut::take_result() else {
+        return Ok(());
+    };
+    let Some(value) = result else {
+        return reset_shortcut_status(hwnd);
+    };
+    let validation = APP.with(|cell| {
+        let state = cell.borrow();
+        let app = state.as_ref().ok_or("Application is not ready.")?;
+        shortcut::check(value, app.host, &app.config)
+    });
+    match validation {
+        Ok(message) => {
+            SHORTCUT_VALUE.with(|shortcut| shortcut.set(value));
+            unsafe {
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, message)?;
+            }
+        }
+        Err(error) => {
+            reset_shortcut_status(hwnd)?;
+            unsafe {
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, &error.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn selected_provider(hwnd: HWND) -> AppResult<Provider> {
@@ -488,7 +511,7 @@ fn account_done(hwnd: HWND) -> AppResult<()> {
 fn layout(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let shortcut = theme::is_selected(GetDlgItem(Some(hwnd), HOTKEY)?);
-        let offset = if shortcut { 44 } else { 0 };
+        let offset = if shortcut { 72 } else { 0 };
         let azure = theme::is_selected(GetDlgItem(Some(hwnd), AZURE)?);
         let compact = if azure { 0 } else { 40 };
         for id in [ENDPOINT_LABEL, ENDPOINT, KEY_LABEL, KEY, REVEAL] {
@@ -503,7 +526,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
                 if azure { SW_HIDE } else { SW_SHOW },
             );
         }
-        for id in [SHORTCUT, SHORTCUT_LABEL] {
+        for id in [SHORTCUT, SHORTCUT_LABEL, SHORTCUT_STATUS] {
             let _ = ShowWindow(
                 GetDlgItem(Some(hwnd), id)?,
                 if shortcut { SW_SHOW } else { SW_HIDE },
@@ -513,7 +536,8 @@ fn layout(hwnd: HWND) -> AppResult<()> {
             (RIGHT_HOLD, 20, 82, 214, 34),
             (HOTKEY, 242, 82, 218, 34),
             (SHORTCUT_LABEL, 20, 132, 94, 22),
-            (SHORTCUT, 124, 130, 336, 26),
+            (SHORTCUT, 124, 126, 336, 34),
+            (SHORTCUT_STATUS, 20, 166, 440, 34),
             (AZURE, 20, 164 + offset, 152, 34),
             (CODEX, 180, 164 + offset, 136, 34),
             (COPILOT, 324, 164 + offset, 136, 34),
@@ -612,6 +636,7 @@ fn update_active_source(hwnd: HWND) -> AppResult<()> {
 }
 
 fn save() -> AppResult<()> {
+    shortcut::cancel();
     APP.with(|cell| {
         let mut state = cell.borrow_mut();
         let app = state.as_mut().ok_or("Application is not ready.")?;
@@ -653,6 +678,7 @@ fn save() -> AppResult<()> {
 }
 
 fn hide(hwnd: HWND) -> AppResult<()> {
+    shortcut::cancel();
     if !LOGIN_ACTIVE.with(|active| active.get()) {
         ACCOUNT_TASK.with(|task| *task.borrow_mut() = None);
     }
@@ -680,7 +706,7 @@ fn paint(hwnd: HWND) {
             theme::TEXT,
         );
         let shortcut = GetDlgItem(Some(hwnd), HOTKEY).is_ok_and(theme::is_selected);
-        let offset = if shortcut { 44 } else { 0 };
+        let offset = if shortcut { 72 } else { 0 };
         canvas.label(
             "Activation",
             canvas.rect(20, 54, 440, 20),
@@ -695,9 +721,6 @@ fn paint(hwnd: HWND) {
         }
         if azure {
             canvas.fill(canvas.rect(20, 274 + offset, 440, 1), theme::BORDER);
-        }
-        if shortcut {
-            canvas.fill(canvas.rect(124, 158, 336, 1), theme::BORDER);
         }
         canvas.label(
             "Translation source",
@@ -760,6 +783,19 @@ pub unsafe extern "system" fn window_proc(
             return result;
         }
         let result = match message {
+            WM_COMMAND if wp.0 & 0xffff == SHORTCUT as usize => (|| -> AppResult<()> {
+                shortcut::record(hwnd);
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Press shortcut...")?;
+                theme::set_text(
+                    GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
+                    "Press a combination or double-tap Ctrl. Esc cancels.",
+                )
+            })(),
+            shortcut::RECORDED => recorded_shortcut(hwnd),
+            WM_ACTIVATE if wp.0 & 0xffff == WA_INACTIVE as usize => {
+                shortcut::cancel();
+                reset_shortcut_status(hwnd)
+            }
             DM_GETDEFID => return LRESULT(((DC_HASDEFID as usize) << 16 | SAVE) as isize),
             WM_PAINT => {
                 paint(hwnd);

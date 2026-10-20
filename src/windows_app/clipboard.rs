@@ -221,6 +221,7 @@ pub fn copy_selection(source: HWND, focused_process: u32) -> AppResult<String> {
                 ki: KEYBDINPUT {
                     wVk: code,
                     dwFlags: flags,
+                    dwExtraInfo: super::REPLAY,
                     ..Default::default()
                 },
             },
