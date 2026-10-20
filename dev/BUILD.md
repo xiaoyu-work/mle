@@ -14,17 +14,29 @@ cargo check
 The portable application is generated in `dist\MLE`. Keep the `data` and
 `licenses` folders beside `mle.exe`.
 
+To create a Windows installer, install Inno Setup 6, then run:
+
+```powershell
+winget install --id JRSoftware.InnoSetup --exact
+.\tools\build_installer.ps1 -Architecture x64
+```
+
+Use `-Architecture arm64` for a native ARM64 build. Installers are generated
+in `dist\installers`. Installation is per-user, with a Start menu shortcut
+and an entry in Windows Installed apps for uninstalling. Preferences are
+preserved on uninstall.
+
 ## Manual GitHub Actions build
 
 In the repository's **Actions** tab, select **Build Windows app**, then
 **Run workflow**. It does not run automatically on pushes or pull requests.
 
 The workflow builds natively on separate x64 and ARM64 Windows runners.
-Download the matching artifact (`MLE-windows-x64` or `MLE-windows-arm64`)
-from the completed run and extract it once.
-Open `mle.exe`, keeping the included folders beside it.
-This is an unsigned portable package, not an installer; Windows may show a
-SmartScreen warning.
+Download the matching artifact (`MLE-windows-x64-setup` or
+`MLE-windows-arm64-setup`) and extract the setup EXE. Run it to install MLE,
+then launch MLE from the Start menu. GitHub wraps Actions artifacts in a ZIP;
+the artifact contains only the installer, not loose application files.
+The installer is unsigned; Windows may show a SmartScreen warning.
 
 ## Icon
 

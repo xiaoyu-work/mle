@@ -55,10 +55,24 @@ jobs:
             throw "Incorrect executable architecture: $machine"
           }
 
-      - name: Upload Windows package
+      - name: Install Inno Setup
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash
+          if ($hash -ne '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732') {
+            throw 'Inno Setup checksum mismatch.'
+          }
+          $process = Start-Process $setup -ArgumentList '/CURRENTUSER', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
+
+      - name: Build Windows installer
+        run: .\tools\build_installer.ps1 -Architecture ${{ matrix.arch }}
+
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: MLE-windows-${{ matrix.arch }}
-          path: dist\MLE
+          name: MLE-windows-${{ matrix.arch }}-setup
+          path: dist\installers\*-windows-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
           retention-days: 30
