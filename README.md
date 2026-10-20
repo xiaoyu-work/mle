@@ -76,8 +76,11 @@ the local OAuth callback. Codex's hosted/streamlined success-page redirects are
 disabled so signing in does not launch the Codex desktop app. MLE receives the
 completion event and restores its own Settings window; Windows may require a
 click on its taskbar notification to bring it to the foreground. After installation, click
-**Sign in** again. **Refresh**
-checks the current login. Save selects the translation source; switching sources
+**Sign in** again. Login status is checked automatically when opening Settings or
+selecting a source. A successful login shows a disabled **Signed in** button.
+**Active online** shows the saved source actually used for online requests;
+an unsaved selection explicitly says **Save to switch**.
+Save selects the translation source; switching sources
 preserves your Azure endpoint and key. Already signed-in official CLI accounts
 are reused. Codex requires ChatGPT sign-in, not an API key.
 Codex uses the official component's recommended model rather than inheriting a

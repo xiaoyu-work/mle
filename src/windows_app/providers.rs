@@ -76,7 +76,12 @@ fn command(provider: Provider) -> AppResult<Command> {
     Ok(command)
 }
 
-pub fn connect(provider: Provider) -> AppResult<String> {
+pub struct AccountStatus {
+    pub signed_in: bool,
+    pub message: String,
+}
+
+pub fn connect(provider: Provider) -> AppResult<AccountStatus> {
     if executable(provider).is_none() {
         let package = match provider {
             Provider::Codex => "OpenAI.Codex",
@@ -193,16 +198,19 @@ fn login_codex() -> AppResult<()> {
     }
 }
 
-pub fn status(provider: Provider) -> AppResult<String> {
+pub fn status(provider: Provider) -> AppResult<AccountStatus> {
     if executable(provider).is_none() {
-        return Ok(format!("{} is not installed.", name(provider)));
+        return Ok(AccountStatus {
+            signed_in: false,
+            message: format!("{} is not installed.", name(provider)),
+        });
     }
     let mut rpc = Rpc::start(provider)?;
     account(&mut rpc, provider)?;
-    Ok(format!(
-        "{} signed in. Uses your subscription.",
-        name(provider)
-    ))
+    Ok(AccountStatus {
+        signed_in: true,
+        message: format!("{} signed in. Uses your subscription.", name(provider)),
+    })
 }
 
 fn account(rpc: &mut Rpc, provider: Provider) -> AppResult<()> {

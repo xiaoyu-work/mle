@@ -33,16 +33,17 @@ const AZURE: i32 = 222;
 const CODEX: i32 = 223;
 const COPILOT: i32 = 224;
 const CONNECT: i32 = 225;
-const CHECK: i32 = 226;
 const ACCOUNT: i32 = 227;
+const ACTIVE_SOURCE: i32 = 228;
 const REFRESH_DPI: u32 = WM_APP + 20;
 const ACCOUNT_DONE: u32 = WM_APP + 21;
 const TBM_GETPOS: u32 = WM_USER;
 
-type AccountTask = std::sync::mpsc::Receiver<Result<String, String>>;
+type AccountTask = std::sync::mpsc::Receiver<Result<providers::AccountStatus, String>>;
 thread_local! {
     static ACCOUNT_TASK: std::cell::RefCell<Option<AccountTask>> = const { std::cell::RefCell::new(None) };
     static LOGIN_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SAVED_PROVIDER: std::cell::Cell<Provider> = const { std::cell::Cell::new(Provider::Azure) };
 }
 
 pub struct Window {
@@ -115,6 +116,7 @@ impl Window {
             create(w!("STATIC"), "Endpoint", WINDOW_STYLE(0), ENDPOINT_LABEL)?;
             create(w!("STATIC"), "API key", WINDOW_STYLE(0), KEY_LABEL)?;
             create(w!("STATIC"), "", WINDOW_STYLE(0), ACCOUNT)?;
+            create(w!("STATIC"), "", WINDOW_STYLE(0), ACTIVE_SOURCE)?;
             let hotkey = create(w!("msctls_hotkey32"), "", WS_TABSTOP, SHORTCUT)?;
             // The hotkey control adds a client edge even without WS_BORDER.
             SetWindowLongW(
@@ -177,7 +179,6 @@ impl Window {
                 ("Cancel", IDCANCEL.0, theme::QUIET),
                 ("Save", SAVE as i32, theme::PRIMARY),
                 ("Sign in", CONNECT, theme::PRIMARY),
-                ("Refresh", CHECK, theme::QUIET),
             ] {
                 let button = create(
                     w!("BUTTON"),
@@ -220,8 +221,8 @@ impl Window {
                 CODEX,
                 COPILOT,
                 CONNECT,
-                CHECK,
                 ACCOUNT,
+                ACTIVE_SOURCE,
                 IDCANCEL.0,
                 SAVE as i32,
             ] {
@@ -233,6 +234,7 @@ impl Window {
     }
 
     pub fn load(&self, config: &Config) -> AppResult<()> {
+        SAVED_PROVIDER.with(|provider| provider.set(config.provider));
         choose_trigger(self.hwnd, config.trigger == Trigger::Hotkey)?;
         let mut modifiers = 0u16;
         if config.hotkey_modifiers & 1 != 0 {
@@ -362,6 +364,7 @@ fn choose_provider(hwnd: HWND, provider: Provider) -> AppResult<()> {
         }
     }
     layout(hwnd)?;
+    update_active_source(hwnd)?;
     if provider != Provider::Azure {
         account_task(hwnd, false)?;
     }
@@ -387,9 +390,15 @@ fn account_task(hwnd: HWND, connect: bool) -> AppResult<()> {
                 "Checking sign-in..."
             },
         )?;
-        for id in [CONNECT, CHECK] {
-            let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, false);
-        }
+        theme::set_text(
+            GetDlgItem(Some(hwnd), CONNECT)?,
+            if connect {
+                "Signing in..."
+            } else {
+                "Checking..."
+            },
+        )?;
+        let _ = EnableWindow(GetDlgItem(Some(hwnd), CONNECT)?, false);
         if connect {
             for id in [AZURE, CODEX, COPILOT] {
                 let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, false);
@@ -428,7 +437,7 @@ fn account_done(hwnd: HWND) -> AppResult<()> {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(
-                "The sign-in check stopped unexpectedly. Click Refresh to retry.".into(),
+                "The sign-in check stopped unexpectedly. Reopen Settings to retry.".into(),
             )),
         });
         if result.is_some() {
@@ -438,20 +447,24 @@ fn account_done(hwnd: HWND) -> AppResult<()> {
     });
     if let Some(result) = result {
         let signing_in = LOGIN_ACTIVE.with(|active| active.replace(false));
+        let (signed_in, message) = match result {
+            Ok(status) => (status.signed_in, status.message),
+            Err(error) => (false, error),
+        };
         unsafe {
-            theme::set_text(
-                GetDlgItem(Some(hwnd), ACCOUNT)?,
-                &result.unwrap_or_else(|error| error),
-            )?;
+            theme::set_text(GetDlgItem(Some(hwnd), ACCOUNT)?, &message)?;
             theme::set_text(
                 GetDlgItem(Some(hwnd), CONNECT)?,
-                if providers::executable(selected_provider(hwnd)?).is_some() {
+                if signed_in {
+                    "Signed in"
+                } else if providers::executable(selected_provider(hwnd)?).is_some() {
                     "Sign in"
                 } else {
                     "Install"
                 },
             )?;
-            for id in [CONNECT, CHECK, AZURE, CODEX, COPILOT] {
+            let _ = EnableWindow(GetDlgItem(Some(hwnd), CONNECT)?, !signed_in);
+            for id in [AZURE, CODEX, COPILOT] {
                 let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, true);
             }
             if signing_in {
@@ -484,7 +497,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
                 if azure { SW_SHOW } else { SW_HIDE },
             );
         }
-        for id in [CONNECT, CHECK, ACCOUNT] {
+        for id in [CONNECT, ACCOUNT] {
             let _ = ShowWindow(
                 GetDlgItem(Some(hwnd), id)?,
                 if azure { SW_HIDE } else { SW_SHOW },
@@ -511,7 +524,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
             (REVEAL, 400, 310 + offset, 60, 30),
             (ACCOUNT, 20, 218 + offset, 440, 40),
             (CONNECT, 20, 260 + offset, 104, 34),
-            (CHECK, 136, 260 + offset, 84, 34),
+            (ACTIVE_SOURCE, 20, 476 + offset - compact, 240, 36),
             (FONT_SIZE, 212, 360 + offset - compact, 184, 28),
             (FONT_VALUE, 410, 364 + offset - compact, 50, 22),
             (PREVIEW, 20, 402 + offset - compact, 440, 50),
@@ -579,6 +592,25 @@ fn mask_key(hwnd: HWND, masked: bool) -> AppResult<()> {
     Ok(())
 }
 
+fn update_active_source(hwnd: HWND) -> AppResult<()> {
+    let selected = selected_provider(hwnd)?;
+    let saved = SAVED_PROVIDER.with(|provider| provider.get());
+    let label = match saved {
+        Provider::Azure => "Azure API",
+        Provider::Codex => "Codex (ChatGPT plan)",
+        Provider::Copilot => "Copilot subscription",
+    };
+    let text = if selected == saved {
+        format!("Active online: {label}")
+    } else {
+        format!(
+            "Active online: {label}\nSave to switch to {}.",
+            providers::name(selected)
+        )
+    };
+    unsafe { theme::set_text(GetDlgItem(Some(hwnd), ACTIVE_SOURCE)?, &text) }
+}
+
 fn save() -> AppResult<()> {
     APP.with(|cell| {
         let mut state = cell.borrow_mut();
@@ -608,6 +640,7 @@ fn save() -> AppResult<()> {
             }
             return Err(error);
         }
+        SAVED_PROVIDER.with(|provider| provider.set(app.config.provider));
         if let Some(window) = app.settings.as_ref() {
             theme::set_text(window.key, "")?;
             mask_key(window.hwnd, true)?;
@@ -758,7 +791,6 @@ pub unsafe extern "system" fn window_proc(
                 choose_provider(hwnd, provider)
             }
             WM_COMMAND if wp.0 & 0xffff == CONNECT as usize => account_task(hwnd, true),
-            WM_COMMAND if wp.0 & 0xffff == CHECK as usize => account_task(hwnd, false),
             ACCOUNT_DONE => account_done(hwnd),
             WM_HSCROLL if lp.0 != 0 && GetDlgCtrlID(HWND(lp.0 as *mut _)) == FONT_SIZE => {
                 update_preview(hwnd)
