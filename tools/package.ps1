@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
-    cargo build --release --quiet
+    cargo build --release --locked --quiet
     if ($LASTEXITCODE -ne 0) { throw 'Rust release build failed.' }
     $output = Join-Path (Get-Location) 'dist\MLE'
     New-Item -ItemType Directory -Force -Path "$output\data", "$output\licenses" | Out-Null

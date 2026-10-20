@@ -1,0 +1,46 @@
+name: Build Windows app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed.' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed.' }
+
+      - name: Build portable app
+        run: .\tools\package.ps1
+
+      - name: Create ZIP package
+        run: |
+          $required = @('mle.exe', 'data\dictionary.db', 'licenses\ECDICT.txt', 'README.md', 'LICENSE')
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath "dist\MLE\$file" -PathType Leaf)) {
+              throw "Missing package file: $file"
+            }
+          }
+          Compress-Archive -Path 'dist\MLE' -DestinationPath 'dist\MLE-windows-x64.zip'
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLE-windows-x64
+          path: dist\MLE-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
