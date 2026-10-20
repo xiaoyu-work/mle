@@ -311,7 +311,8 @@ fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let value = SHORTCUT_VALUE.with(|value| value.get());
         theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
-        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
+        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")?;
+        layout(hwnd)
     }
 }
 
@@ -342,7 +343,7 @@ fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
             }
         }
     }
-    Ok(())
+    layout(hwnd)
 }
 
 fn selected_provider(hwnd: HWND) -> AppResult<Provider> {
@@ -496,10 +497,22 @@ fn account_done(hwnd: HWND) -> AppResult<()> {
     Ok(())
 }
 
+fn shortcut_offset(hwnd: HWND, enabled: bool) -> AppResult<i32> {
+    if !enabled {
+        return Ok(0);
+    }
+    let status = unsafe { GetDlgItem(Some(hwnd), SHORTCUT_STATUS)? };
+    Ok(if theme::text(status).is_empty() {
+        44
+    } else {
+        72
+    })
+}
+
 fn layout(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let shortcut = theme::is_selected(GetDlgItem(Some(hwnd), HOTKEY)?);
-        let offset = if shortcut { 72 } else { 0 };
+        let offset = shortcut_offset(hwnd, shortcut)?;
         let azure = theme::is_selected(GetDlgItem(Some(hwnd), AZURE)?);
         let compact = if azure { 0 } else { 40 };
         for id in [ENDPOINT_LABEL, ENDPOINT, KEY_LABEL, KEY, REVEAL] {
@@ -514,12 +527,20 @@ fn layout(hwnd: HWND) -> AppResult<()> {
                 if azure { SW_HIDE } else { SW_SHOW },
             );
         }
-        for id in [SHORTCUT, SHORTCUT_LABEL, SHORTCUT_STATUS] {
+        for id in [SHORTCUT, SHORTCUT_LABEL] {
             let _ = ShowWindow(
                 GetDlgItem(Some(hwnd), id)?,
                 if shortcut { SW_SHOW } else { SW_HIDE },
             );
         }
+        let _ = ShowWindow(
+            GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
+            if shortcut && offset > 44 {
+                SW_SHOW
+            } else {
+                SW_HIDE
+            },
+        );
         for (id, x, y, width, height) in [
             (RIGHT_HOLD, 20, 82, 214, 34),
             (HOTKEY, 242, 82, 218, 34),
@@ -694,7 +715,13 @@ fn paint(hwnd: HWND) {
             theme::TEXT,
         );
         let shortcut = GetDlgItem(Some(hwnd), HOTKEY).is_ok_and(theme::is_selected);
-        let offset = if shortcut { 72 } else { 0 };
+        let offset = match shortcut_offset(hwnd, shortcut) {
+            Ok(offset) => offset,
+            Err(error) => {
+                super::defer_error(error.to_string());
+                return;
+            }
+        };
         canvas.label(
             "Activation",
             canvas.rect(20, 54, 440, 20),
@@ -774,7 +801,8 @@ pub unsafe extern "system" fn window_proc(
             WM_COMMAND if wp.0 & 0xffff == SHORTCUT as usize => (|| -> AppResult<()> {
                 shortcut::record(hwnd)?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Recording...")?;
-                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")?;
+                layout(hwnd)
             })(),
             shortcut::RECORDED => recorded_shortcut(hwnd),
             WM_TIMER if wp.0 == shortcut::RECORD_TIMER => shortcut::poll(hwnd),
