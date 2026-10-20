@@ -3,15 +3,17 @@ use windows::{
         Foundation::*,
         Graphics::Gdi::*,
         System::LibraryLoader::GetModuleHandleW,
-        UI::{Controls::*, HiDpi::*, WindowsAndMessaging::*},
+        UI::{
+            Controls::*, HiDpi::*, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*,
+        },
     },
     core::{PCWSTR, w},
 };
 
-use super::{APP, credentials, popup, send_message, show_error, theme, wide};
+use super::{APP, credentials, popup, providers, send_message, show_error, theme, wide};
 use crate::{
     AppResult,
-    config::{Config, Trigger},
+    config::{Config, Provider, Trigger},
 };
 
 const SAVE: usize = 200;
@@ -27,8 +29,21 @@ const KEY_LABEL: i32 = 218;
 const FONT_SIZE: i32 = 219;
 const PREVIEW: i32 = 220;
 const FONT_VALUE: i32 = 221;
+const AZURE: i32 = 222;
+const CODEX: i32 = 223;
+const COPILOT: i32 = 224;
+const CONNECT: i32 = 225;
+const CHECK: i32 = 226;
+const ACCOUNT: i32 = 227;
 const REFRESH_DPI: u32 = WM_APP + 20;
+const ACCOUNT_DONE: u32 = WM_APP + 21;
 const TBM_GETPOS: u32 = WM_USER;
+
+type AccountTask = std::sync::mpsc::Receiver<Result<String, String>>;
+thread_local! {
+    static ACCOUNT_TASK: std::cell::RefCell<Option<AccountTask>> = const { std::cell::RefCell::new(None) };
+    static LOGIN_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 pub struct Window {
     pub hwnd: HWND,
@@ -52,7 +67,7 @@ impl Window {
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT | WS_EX_APPWINDOW,
                 w!("MLE.Settings"),
-                w!("MLE - Settings"),
+                w!("MLE - Make Life Easier"),
                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -84,6 +99,9 @@ impl Window {
             for (title, id, style) in [
                 ("Hold right click", RIGHT_HOLD, theme::CHOICE),
                 ("Keyboard shortcut", HOTKEY, theme::CHOICE),
+                ("Azure OpenAI", AZURE, theme::CHOICE),
+                ("Codex", CODEX, theme::CHOICE),
+                ("Copilot", COPILOT, theme::CHOICE),
             ] {
                 let button = create(
                     w!("BUTTON"),
@@ -96,6 +114,7 @@ impl Window {
             create(w!("STATIC"), "Shortcut", WINDOW_STYLE(0), SHORTCUT_LABEL)?;
             create(w!("STATIC"), "Endpoint", WINDOW_STYLE(0), ENDPOINT_LABEL)?;
             create(w!("STATIC"), "API key", WINDOW_STYLE(0), KEY_LABEL)?;
+            create(w!("STATIC"), "", WINDOW_STYLE(0), ACCOUNT)?;
             let hotkey = create(w!("msctls_hotkey32"), "", WS_TABSTOP, SHORTCUT)?;
             // The hotkey control adds a client edge even without WS_BORDER.
             SetWindowLongW(
@@ -157,6 +176,8 @@ impl Window {
                 ("Show", REVEAL, theme::QUIET),
                 ("Cancel", IDCANCEL.0, theme::QUIET),
                 ("Save", SAVE as i32, theme::PRIMARY),
+                ("Sign in", CONNECT, theme::PRIMARY),
+                ("Refresh", CHECK, theme::QUIET),
             ] {
                 let button = create(
                     w!("BUTTON"),
@@ -176,6 +197,7 @@ impl Window {
             };
             window.apply_font();
             choose_trigger(hwnd, false)?;
+            choose_provider(hwnd, Provider::Azure)?;
             Ok(window)
         }
     }
@@ -194,6 +216,12 @@ impl Window {
                 KEY_LABEL,
                 FONT_SIZE,
                 FONT_VALUE,
+                AZURE,
+                CODEX,
+                COPILOT,
+                CONNECT,
+                CHECK,
+                ACCOUNT,
                 IDCANCEL.0,
                 SAVE as i32,
             ] {
@@ -233,7 +261,8 @@ impl Window {
         }
         update_preview(self.hwnd)?;
         theme::set_text(self.key, &credentials::read()?.unwrap_or_default())?;
-        mask_key(self.hwnd, true)
+        mask_key(self.hwnd, true)?;
+        choose_provider(self.hwnd, config.provider)
     }
 
     fn read(&self) -> AppResult<(Config, String)> {
@@ -251,6 +280,7 @@ impl Window {
             modifiers |= 4;
         }
         let config = Config {
+            provider: selected_provider(self.hwnd)?,
             trigger: if shortcut {
                 Trigger::Hotkey
             } else {
@@ -302,10 +332,164 @@ fn choose_trigger(hwnd: HWND, shortcut: bool) -> AppResult<()> {
     layout(hwnd)
 }
 
+fn selected_provider(hwnd: HWND) -> AppResult<Provider> {
+    unsafe {
+        for (id, provider) in [
+            (AZURE, Provider::Azure),
+            (CODEX, Provider::Codex),
+            (COPILOT, Provider::Copilot),
+        ] {
+            if theme::is_selected(GetDlgItem(Some(hwnd), id)?) {
+                return Ok(provider);
+            }
+        }
+    }
+    Err("Choose a translation source.".into())
+}
+
+fn choose_provider(hwnd: HWND, provider: Provider) -> AppResult<()> {
+    if LOGIN_ACTIVE.with(|active| active.get()) {
+        return Ok(());
+    }
+    ACCOUNT_TASK.with(|task| *task.borrow_mut() = None);
+    unsafe {
+        for (id, choice) in [
+            (AZURE, Provider::Azure),
+            (CODEX, Provider::Codex),
+            (COPILOT, Provider::Copilot),
+        ] {
+            theme::select_button(GetDlgItem(Some(hwnd), id)?, choice == provider);
+        }
+    }
+    layout(hwnd)?;
+    if provider != Provider::Azure {
+        account_task(hwnd, false)?;
+    }
+    Ok(())
+}
+
+fn account_task(hwnd: HWND, connect: bool) -> AppResult<()> {
+    if LOGIN_ACTIVE.with(|active| active.get()) {
+        return Ok(());
+    }
+    let provider = selected_provider(hwnd)?;
+    LOGIN_ACTIVE.with(|active| active.set(connect));
+    unsafe {
+        theme::set_text(
+            GetDlgItem(Some(hwnd), ACCOUNT)?,
+            if connect {
+                if providers::executable(provider).is_some() {
+                    "Complete sign-in in your browser. Keep MLE running."
+                } else {
+                    "Complete installation in the opened window."
+                }
+            } else {
+                "Checking sign-in..."
+            },
+        )?;
+        for id in [CONNECT, CHECK] {
+            let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, false);
+        }
+        if connect {
+            for id in [AZURE, CODEX, COPILOT] {
+                let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, false);
+            }
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    ACCOUNT_TASK.with(|task| *task.borrow_mut() = Some(rx));
+    let window = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let result = if connect {
+            providers::connect(provider)
+        } else {
+            providers::status(provider)
+        };
+        if tx.send(result.map_err(|error| error.to_string())).is_ok() {
+            unsafe {
+                if let Err(error) = PostMessageW(
+                    Some(HWND(window as *mut _)),
+                    ACCOUNT_DONE,
+                    WPARAM(0),
+                    LPARAM(0),
+                ) {
+                    eprintln!("Could not deliver sign-in result: {error}");
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+fn account_done(hwnd: HWND) -> AppResult<()> {
+    let result = ACCOUNT_TASK.with(|task| {
+        let mut task = task.borrow_mut();
+        let result = task.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(
+                "The sign-in check stopped unexpectedly. Click Refresh to retry.".into(),
+            )),
+        });
+        if result.is_some() {
+            *task = None;
+        }
+        result
+    });
+    if let Some(result) = result {
+        let signing_in = LOGIN_ACTIVE.with(|active| active.replace(false));
+        unsafe {
+            theme::set_text(
+                GetDlgItem(Some(hwnd), ACCOUNT)?,
+                &result.unwrap_or_else(|error| error),
+            )?;
+            theme::set_text(
+                GetDlgItem(Some(hwnd), CONNECT)?,
+                if providers::executable(selected_provider(hwnd)?).is_some() {
+                    "Sign in"
+                } else {
+                    "Install"
+                },
+            )?;
+            for id in [CONNECT, CHECK, AZURE, CODEX, COPILOT] {
+                let _ = EnableWindow(GetDlgItem(Some(hwnd), id)?, true);
+            }
+            if signing_in {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+                if !SetForegroundWindow(hwnd).as_bool() {
+                    let notification = FLASHWINFO {
+                        cbSize: size_of::<FLASHWINFO>() as u32,
+                        hwnd,
+                        dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+                        uCount: 3,
+                        dwTimeout: 0,
+                    };
+                    let _ = FlashWindowEx(&notification);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn layout(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let shortcut = theme::is_selected(GetDlgItem(Some(hwnd), HOTKEY)?);
         let offset = if shortcut { 44 } else { 0 };
+        let azure = theme::is_selected(GetDlgItem(Some(hwnd), AZURE)?);
+        let compact = if azure { 0 } else { 40 };
+        for id in [ENDPOINT_LABEL, ENDPOINT, KEY_LABEL, KEY, REVEAL] {
+            let _ = ShowWindow(
+                GetDlgItem(Some(hwnd), id)?,
+                if azure { SW_SHOW } else { SW_HIDE },
+            );
+        }
+        for id in [CONNECT, CHECK, ACCOUNT] {
+            let _ = ShowWindow(
+                GetDlgItem(Some(hwnd), id)?,
+                if azure { SW_HIDE } else { SW_SHOW },
+            );
+        }
         for id in [SHORTCUT, SHORTCUT_LABEL] {
             let _ = ShowWindow(
                 GetDlgItem(Some(hwnd), id)?,
@@ -317,16 +501,22 @@ fn layout(hwnd: HWND) -> AppResult<()> {
             (HOTKEY, 242, 82, 218, 34),
             (SHORTCUT_LABEL, 20, 132, 94, 22),
             (SHORTCUT, 124, 130, 336, 26),
-            (ENDPOINT_LABEL, 20, 138 + offset, 440, 20),
-            (ENDPOINT, 20, 168 + offset, 440, 24),
-            (KEY_LABEL, 20, 208 + offset, 440, 20),
-            (KEY, 20, 238 + offset, 372, 24),
-            (REVEAL, 400, 232 + offset, 60, 30),
-            (FONT_SIZE, 212, 282 + offset, 184, 28),
-            (FONT_VALUE, 410, 286 + offset, 50, 22),
-            (PREVIEW, 20, 324 + offset, 440, 50),
-            (IDCANCEL.0, 272, 398 + offset, 84, 34),
-            (SAVE as i32, 368, 398 + offset, 92, 34),
+            (AZURE, 20, 164 + offset, 152, 34),
+            (CODEX, 180, 164 + offset, 136, 34),
+            (COPILOT, 324, 164 + offset, 136, 34),
+            (ENDPOINT_LABEL, 20, 216 + offset, 440, 20),
+            (ENDPOINT, 20, 246 + offset, 440, 24),
+            (KEY_LABEL, 20, 286 + offset, 440, 20),
+            (KEY, 20, 316 + offset, 372, 24),
+            (REVEAL, 400, 310 + offset, 60, 30),
+            (ACCOUNT, 20, 218 + offset, 440, 40),
+            (CONNECT, 20, 260 + offset, 104, 34),
+            (CHECK, 136, 260 + offset, 84, 34),
+            (FONT_SIZE, 212, 360 + offset - compact, 184, 28),
+            (FONT_VALUE, 410, 364 + offset - compact, 50, 22),
+            (PREVIEW, 20, 402 + offset - compact, 440, 50),
+            (IDCANCEL.0, 272, 476 + offset - compact, 84, 34),
+            (SAVE as i32, 368, 476 + offset - compact, 92, 34),
         ] {
             MoveWindow(
                 GetDlgItem(Some(hwnd), id)?,
@@ -340,7 +530,7 @@ fn layout(hwnd: HWND) -> AppResult<()> {
         let dpi = GetDpiForWindow(hwnd);
         let mut bounds = RECT {
             right: theme::px(hwnd, 480),
-            bottom: theme::px(hwnd, 448 + offset),
+            bottom: theme::px(hwnd, 526 + offset - compact),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -430,6 +620,9 @@ fn save() -> AppResult<()> {
 }
 
 fn hide(hwnd: HWND) -> AppResult<()> {
+    if !LOGIN_ACTIVE.with(|active| active.get()) {
+        ACCOUNT_TASK.with(|task| *task.borrow_mut() = None);
+    }
     unsafe {
         theme::set_text(GetDlgItem(Some(hwnd), KEY)?, "")?;
         mask_key(hwnd, true)?;
@@ -447,7 +640,7 @@ fn paint(hwnd: HWND) {
         let _ = GetClientRect(hwnd, &mut bounds);
         canvas.fill(bounds, theme::SURFACE);
         canvas.label(
-            "Settings",
+            "Make Life Easier",
             canvas.rect(20, 14, 440, 28),
             20,
             600,
@@ -462,15 +655,27 @@ fn paint(hwnd: HWND) {
             600,
             theme::TEXT,
         );
-        for y in [196 + offset, 266 + offset, 384 + offset] {
+        let azure = GetDlgItem(Some(hwnd), AZURE).is_ok_and(theme::is_selected);
+        let compact = if azure { 0 } else { 40 };
+        for y in [344 + offset - compact, 462 + offset - compact] {
             canvas.fill(canvas.rect(20, y, 440, 1), theme::BORDER);
+        }
+        if azure {
+            canvas.fill(canvas.rect(20, 274 + offset, 440, 1), theme::BORDER);
         }
         if shortcut {
             canvas.fill(canvas.rect(124, 158, 336, 1), theme::BORDER);
         }
         canvas.label(
+            "Translation source",
+            canvas.rect(20, 136 + offset, 440, 20),
+            13,
+            600,
+            theme::TEXT,
+        );
+        canvas.label(
             "Translation font size",
-            canvas.rect(20, 284 + offset, 184, 26),
+            canvas.rect(20, 362 + offset - compact, 184, 26),
             13,
             600,
             theme::TEXT,
@@ -541,6 +746,20 @@ pub unsafe extern "system" fn window_proc(
             WM_COMMAND if [RIGHT_HOLD as usize, HOTKEY as usize].contains(&(wp.0 & 0xffff)) => {
                 choose_trigger(hwnd, wp.0 & 0xffff == HOTKEY as usize)
             }
+            WM_COMMAND
+                if [AZURE as usize, CODEX as usize, COPILOT as usize]
+                    .contains(&(wp.0 & 0xffff)) =>
+            {
+                let provider = match (wp.0 & 0xffff) as i32 {
+                    CODEX => Provider::Codex,
+                    COPILOT => Provider::Copilot,
+                    _ => Provider::Azure,
+                };
+                choose_provider(hwnd, provider)
+            }
+            WM_COMMAND if wp.0 & 0xffff == CONNECT as usize => account_task(hwnd, true),
+            WM_COMMAND if wp.0 & 0xffff == CHECK as usize => account_task(hwnd, false),
+            ACCOUNT_DONE => account_done(hwnd),
             WM_HSCROLL if lp.0 != 0 && GetDlgCtrlID(HWND(lp.0 as *mut _)) == FONT_SIZE => {
                 update_preview(hwnd)
             }

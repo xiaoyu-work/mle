@@ -1,6 +1,7 @@
 mod credentials;
 mod http;
 mod popup;
+mod providers;
 mod selection;
 mod settings;
 mod theme;
@@ -25,7 +26,7 @@ use windows::{
 
 use crate::{
     AppResult,
-    config::{Config, Trigger},
+    config::{Config, Provider, Trigger},
     dictionary::Dictionary,
 };
 
@@ -96,7 +97,12 @@ fn send_message(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
 pub fn show_error(text: &str) {
     let text = wide(text);
     unsafe {
-        MessageBoxW(None, PCWSTR(text.as_ptr()), w!("MLE"), MB_OK | MB_ICONERROR);
+        MessageBoxW(
+            None,
+            PCWSTR(text.as_ptr()),
+            w!("MLE - Make Life Easier"),
+            MB_OK | MB_ICONERROR,
+        );
     }
 }
 
@@ -131,6 +137,10 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
             let dictionary = Dictionary::open(&crate::dictionary::default_path()?)?;
             if let Some(meaning) = dictionary.lookup(&selection)? {
                 return Ok(popup::Content::Dictionary(meaning));
+            }
+            if work.config.provider != Provider::Azure {
+                return providers::translate(work.config.provider, &selection)
+                    .map(popup::Content::Translation);
             }
             if work.config.azure_endpoint.is_empty() {
                 return Err("Add your Azure OpenAI endpoint and API key in Settings.".into());
@@ -316,7 +326,7 @@ impl App {
                 hIcon: theme::icon(16)?,
                 ..Default::default()
             };
-            let tip = wide("MLE - selection translator");
+            let tip = wide("MLE - Make Life Easier");
             data.szTip[..tip.len()].copy_from_slice(&tip);
             if !Shell_NotifyIconW(command, &data).as_bool() {
                 return Err("Could not update the tray icon.".into());

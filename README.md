@@ -1,9 +1,9 @@
-# MLE
+# MLE - Make Life Easier
 
 A lightweight native Windows selection translator written in Rust. Local
-English-Chinese dictionary first; optional Azure OpenAI GPT-4.1 mini for missing words
-and sentences. No browser engine, local language model, clipboard-based capture,
-or selection history.
+English-Chinese dictionary first; optional Azure OpenAI, Codex (ChatGPT), or
+GitHub Copilot for missing words and sentences. No browser engine, local language
+model, clipboard-based capture, or MLE selection history.
 
 ## Run
 
@@ -43,7 +43,7 @@ text from 12 to 32 logical pixels.
 The sample underneath updates immediately using the same font as the popup.
 Save applies the size to future results; Cancel discards the change.
 
-To enable online translation, enter your Azure OpenAI deployment's full
+Choose **Azure OpenAI** to enter your Azure OpenAI deployment's full
 **chat completions endpoint** and its **API key**, and save. For example:
 
 ```text
@@ -66,6 +66,40 @@ Filtered, refused, or truncated results are reported as errors rather than
 shown as completed translations. Azure model token charges and usage limits
 apply. The application uses the system WinHTTP proxy/TLS implementation and
 does not bypass certificate verification.
+
+Alternatively choose **Codex** or **Copilot**, then **Install** if the official
+component is missing, and **Sign in**. Installation uses Windows Package Manager
+(`OpenAI.Codex` / `GitHub.Copilot`); installation and login open an official
+installation console; sign-in opens your default browser directly.
+Keep MLE running until authorization completes: its official component receives
+the local OAuth callback. Codex's hosted/streamlined success-page redirects are
+disabled so signing in does not launch the Codex desktop app. MLE receives the
+completion event and restores its own Settings window; Windows may require a
+click on its taskbar notification to bring it to the foreground. After installation, click
+**Sign in** again. **Refresh**
+checks the current login. Save selects the translation source; switching sources
+preserves your Azure endpoint and key. Already signed-in official CLI accounts
+are reused. Codex requires ChatGPT sign-in, not an API key.
+Codex uses the official component's recommended model rather than inheriting a
+possibly incompatible model from the user's coding configuration.
+
+These modes use your account's plan, policies, model availability, and usage
+limits; they are not unlimited or a substitute for a general-purpose API key.
+Quota, login and component errors are shown without silently falling back to
+another source. Credentials and token refresh belong to the official component;
+MLE does not copy OAuth tokens into its settings. The CLI's own credential-store
+policy applies, including any file-based fallback.
+
+The optional components run out of process only for account checks or online
+translation, then exit. They are not bundled into the lightweight MLE executable
+and have additional installation, startup, and peak-memory costs. Local
+dictionary lookups and Azure requests never start them. Translation uses a
+separate empty working directory, disables tool access and custom configuration
+discovery where supported, and rejects approval requests. Codex threads are
+ephemeral; Copilot sessions are destroyed after a response. Official components
+can still maintain their own operational logs, caches, and account metadata.
+The selected online provider receives the selected text; its privacy policy
+applies.
 
 Keys are stored as per-user Windows generic credentials under
 `MLE/AzureOpenAI`, not in source or settings. Previously saved Translator keys

@@ -10,9 +10,18 @@ pub enum Trigger {
     Hotkey,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum Provider {
+    #[default]
+    Azure,
+    Codex,
+    Copilot,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
+    pub provider: Provider,
     pub trigger: Trigger,
     pub hotkey_modifiers: u32,
     pub hotkey_key: u16,
@@ -23,6 +32,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            provider: Provider::Azure,
             trigger: Trigger::RightHold,
             hotkey_modifiers: 3,
             hotkey_key: b'T' as u16,
@@ -43,7 +53,7 @@ impl Config {
         if self.trigger == Trigger::Hotkey && self.hotkey_modifiers & 3 == 0 {
             return Err("The shortcut must include Ctrl or Alt.".into());
         }
-        if !self.azure_endpoint.is_empty() {
+        if self.provider == Provider::Azure && !self.azure_endpoint.is_empty() {
             crate::translation::Endpoint::parse(&self.azure_endpoint)?;
         }
         Ok(())
