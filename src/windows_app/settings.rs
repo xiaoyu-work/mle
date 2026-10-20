@@ -128,12 +128,7 @@ impl Window {
                 SHORTCUT,
             )?;
             theme::button(hotkey, theme::CHOICE);
-            create(
-                w!("STATIC"),
-                "Record a key, combination, or double tap.",
-                WINDOW_STYLE(0),
-                SHORTCUT_STATUS,
-            )?;
+            create(w!("STATIC"), "", WINDOW_STYLE(0), SHORTCUT_STATUS)?;
             let endpoint = create(
                 w!("EDIT"),
                 "",
@@ -315,11 +310,11 @@ fn choose_trigger(hwnd: HWND, shortcut: bool) -> AppResult<()> {
 fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let value = SHORTCUT_VALUE.with(|value| value.get());
-        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
         theme::set_text(
-            GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-            "Record a key, combination, or double tap.",
-        )
+            GetDlgItem(Some(hwnd), SHORTCUT)?,
+            &format!("{}  \u{70b9}\u{51fb}\u{5f55}\u{5165}", value.label()),
+        )?;
+        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
     }
 }
 
@@ -339,7 +334,10 @@ fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
         Ok(message) => {
             SHORTCUT_VALUE.with(|shortcut| shortcut.set(value));
             unsafe {
-                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
+                theme::set_text(
+                    GetDlgItem(Some(hwnd), SHORTCUT)?,
+                    &format!("{}  \u{70b9}\u{51fb}\u{5f55}\u{5165}", value.label()),
+                )?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, message)?;
             }
         }
@@ -781,11 +779,11 @@ pub unsafe extern "system" fn window_proc(
         let result = match message {
             WM_COMMAND if wp.0 & 0xffff == SHORTCUT as usize => (|| -> AppResult<()> {
                 shortcut::record(hwnd)?;
-                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Press shortcut...")?;
                 theme::set_text(
-                    GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-                    "Press keys or double-tap one key. Esc cancels.",
-                )
+                    GetDlgItem(Some(hwnd), SHORTCUT)?,
+                    "\u{5f55}\u{5165}\u{4e2d}...",
+                )?;
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
             })(),
             shortcut::RECORDED => recorded_shortcut(hwnd),
             WM_TIMER if wp.0 == shortcut::RECORD_TIMER => shortcut::poll(hwnd),
