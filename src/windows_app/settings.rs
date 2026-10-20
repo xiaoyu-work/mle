@@ -312,7 +312,7 @@ fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
         let value = SHORTCUT_VALUE.with(|value| value.get());
         theme::set_text(
             GetDlgItem(Some(hwnd), SHORTCUT)?,
-            &format!("{}  \u{70b9}\u{51fb}\u{5f55}\u{5165}", value.label()),
+            &format!("{}  Click to record", value.label()),
         )?;
         theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
     }
@@ -336,7 +336,7 @@ fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
             unsafe {
                 theme::set_text(
                     GetDlgItem(Some(hwnd), SHORTCUT)?,
-                    &format!("{}  \u{70b9}\u{51fb}\u{5f55}\u{5165}", value.label()),
+                    &format!("{}  Click to record", value.label()),
                 )?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, message)?;
             }
@@ -779,10 +779,7 @@ pub unsafe extern "system" fn window_proc(
         let result = match message {
             WM_COMMAND if wp.0 & 0xffff == SHORTCUT as usize => (|| -> AppResult<()> {
                 shortcut::record(hwnd)?;
-                theme::set_text(
-                    GetDlgItem(Some(hwnd), SHORTCUT)?,
-                    "\u{5f55}\u{5165}\u{4e2d}...",
-                )?;
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Recording...")?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
             })(),
             shortcut::RECORDED => recorded_shortcut(hwnd),
