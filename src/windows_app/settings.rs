@@ -329,11 +329,11 @@ fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
         shortcut::check(value, app.host, &app.config)
     });
     match validation {
-        Ok(message) => {
+        Ok(()) => {
             SHORTCUT_VALUE.with(|shortcut| shortcut.set(value));
             unsafe {
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
-                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, message)?;
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")?;
             }
         }
         Err(error) => {
@@ -394,9 +394,9 @@ fn account_task(hwnd: HWND, connect: bool) -> AppResult<()> {
             GetDlgItem(Some(hwnd), ACCOUNT)?,
             if connect {
                 if providers::executable(provider).is_some() {
-                    "Complete sign-in in your browser. Keep MLE running."
+                    "Signing in..."
                 } else {
-                    "Complete installation in the opened window."
+                    "Installing..."
                 }
             } else {
                 "Checking sign-in..."
@@ -464,7 +464,10 @@ fn account_done(hwnd: HWND) -> AppResult<()> {
             Err(error) => (false, error),
         };
         unsafe {
-            theme::set_text(GetDlgItem(Some(hwnd), ACCOUNT)?, &message)?;
+            theme::set_text(
+                GetDlgItem(Some(hwnd), ACCOUNT)?,
+                if signed_in { "" } else { &message },
+            )?;
             theme::set_text(
                 GetDlgItem(Some(hwnd), CONNECT)?,
                 if signed_in {
@@ -637,7 +640,7 @@ fn update_active_source(hwnd: HWND) -> AppResult<()> {
         format!("Active online: {label}")
     } else {
         format!(
-            "Active online: {label}\nSave to switch to {}.",
+            "Active online: {label}\nPending: {}",
             providers::name(selected)
         )
     };

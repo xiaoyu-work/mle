@@ -271,7 +271,7 @@ pub fn take_result() -> Option<Option<Shortcut>> {
     STATE.with(|state| state.borrow_mut().result.take())
 }
 
-pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'static str> {
+pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<()> {
     let config = Config {
         hotkey_modifiers: shortcut.modifiers,
         hotkey_key: shortcut.key,
@@ -287,7 +287,7 @@ pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'st
         if matches!(normalized(shortcut.key), 0x12 | 0x5b) {
             return Err("Double-tapping Alt or Win opens system menus. Choose another key.".into());
         }
-        return Ok("Double tap passes through. App gesture conflicts cannot be checked.");
+        return Ok(());
     }
     if matches!(shortcut.key, 0x10..=0x12 | 0x5b | 0x5c | 0xa0..=0xa5) {
         return Err("Add another key, or double-tap this modifier.".into());
@@ -300,7 +300,7 @@ pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'st
     if current.trigger == crate::config::Trigger::Hotkey
         && Shortcut::from_config(current) == shortcut
     {
-        return Ok("Current shortcut. Save to keep it.");
+        return Ok(());
     }
     unsafe {
         RegisterHotKey(
@@ -312,13 +312,7 @@ pub fn check(shortcut: Shortcut, host: HWND, current: &Config) -> AppResult<&'st
         .map_err(|_| "This global shortcut is already in use. Record another.")?;
         UnregisterHotKey(Some(host), 3)?;
     }
-    Ok(
-        if shortcut.modifiers == 0 && !matches!(shortcut.key, 0x70..=0x87) {
-            "Available. This key will be reserved globally while enabled."
-        } else {
-            "Available as a global shortcut. Save to apply."
-        },
-    )
+    Ok(())
 }
 
 unsafe extern "system" fn keyboard_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
