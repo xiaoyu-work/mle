@@ -310,10 +310,7 @@ fn choose_trigger(hwnd: HWND, shortcut: bool) -> AppResult<()> {
 fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
     unsafe {
         let value = SHORTCUT_VALUE.with(|value| value.get());
-        theme::set_text(
-            GetDlgItem(Some(hwnd), SHORTCUT)?,
-            &format!("{}  Click to record", value.label()),
-        )?;
+        theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
         theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, "")
     }
 }
@@ -334,10 +331,7 @@ fn recorded_shortcut(hwnd: HWND) -> AppResult<()> {
         Ok(message) => {
             SHORTCUT_VALUE.with(|shortcut| shortcut.set(value));
             unsafe {
-                theme::set_text(
-                    GetDlgItem(Some(hwnd), SHORTCUT)?,
-                    &format!("{}  Click to record", value.label()),
-                )?;
+                theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?, message)?;
             }
         }
