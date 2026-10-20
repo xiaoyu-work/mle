@@ -46,7 +46,7 @@ thread_local! {
     static LOGIN_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SAVED_PROVIDER: std::cell::Cell<Provider> = const { std::cell::Cell::new(Provider::Azure) };
     static SHORTCUT_VALUE: std::cell::Cell<shortcut::Shortcut> = const {
-        std::cell::Cell::new(shortcut::Shortcut {modifiers:3,key:b'T' as u16})
+        std::cell::Cell::new(shortcut::Shortcut {modifiers:3,key:b'T' as u16,double_tap:false})
     };
 }
 
@@ -130,7 +130,7 @@ impl Window {
             theme::button(hotkey, theme::CHOICE);
             create(
                 w!("STATIC"),
-                "Click to record a key combination.",
+                "Record a key, combination, or double tap.",
                 WINDOW_STYLE(0),
                 SHORTCUT_STATUS,
             )?;
@@ -265,6 +265,7 @@ impl Window {
             },
             hotkey_modifiers: hotkey.modifiers,
             hotkey_key: hotkey.key,
+            hotkey_double_tap: hotkey.double_tap,
             azure_endpoint: theme::text(self.endpoint).trim().to_owned(),
             font_size: selected_font_size(self.hwnd)?,
         };
@@ -317,7 +318,7 @@ fn reset_shortcut_status(hwnd: HWND) -> AppResult<()> {
         theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, &value.label())?;
         theme::set_text(
             GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-            "Click to record a key combination.",
+            "Record a key, combination, or double tap.",
         )
     }
 }
@@ -779,14 +780,15 @@ pub unsafe extern "system" fn window_proc(
         }
         let result = match message {
             WM_COMMAND if wp.0 & 0xffff == SHORTCUT as usize => (|| -> AppResult<()> {
-                shortcut::record(hwnd);
+                shortcut::record(hwnd)?;
                 theme::set_text(GetDlgItem(Some(hwnd), SHORTCUT)?, "Press shortcut...")?;
                 theme::set_text(
                     GetDlgItem(Some(hwnd), SHORTCUT_STATUS)?,
-                    "Press a key combination. Esc cancels.",
+                    "Press keys or double-tap one key. Esc cancels.",
                 )
             })(),
             shortcut::RECORDED => recorded_shortcut(hwnd),
+            WM_TIMER if wp.0 == shortcut::RECORD_TIMER => shortcut::poll(hwnd),
             WM_ACTIVATE if wp.0 & 0xffff == WA_INACTIVE as usize => {
                 shortcut::cancel();
                 reset_shortcut_status(hwnd)

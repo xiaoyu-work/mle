@@ -347,7 +347,8 @@ impl App {
                 self.hotkey_registered = false;
             }
             RIGHT_HOLD.store(self.config.trigger == Trigger::RightHold, Ordering::Relaxed);
-            if self.config.trigger == Trigger::Hotkey {
+            shortcut::configure(&self.config);
+            if self.config.trigger == Trigger::Hotkey && !self.config.hotkey_double_tap {
                 RegisterHotKey(
                     Some(self.host),
                     HOTKEY,
@@ -666,6 +667,9 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         }
         let host = HWND(HOST.load(Ordering::Relaxed) as *mut _);
         let event = wp.0 as u32;
+        if matches!(event, WM_LBUTTONDOWN | WM_MBUTTONDOWN | WM_RBUTTONDOWN) {
+            shortcut::interrupt();
+        }
         if event == WM_MOUSEMOVE && GESTURE.with(|state| state.borrow().start.is_none()) {
             return CallNextHookEx(None, code, wp, lp);
         }
