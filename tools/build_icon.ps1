@@ -23,27 +23,28 @@ public static class MleIconBuilder {
     }
     static void Draw(Graphics g) {
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using (var purple = new SolidBrush(Color.FromArgb(91,83,219)))
-        using (var lilac = new SolidBrush(Color.FromArgb(183,177,255)))
-        using (var white = new SolidBrush(Color.White))
-        using (var tile = Round(8,8,240,240,56))
-        using (var back = Round(112,44,104,120,22))
-        using (var front = Round(38,88,116,104,22))
-        using (var darkPen = new Pen(Color.FromArgb(64,54,174),8))
-        using (var accentPen = new Pen(Color.FromArgb(91,83,219),9)) {
-            darkPen.StartCap = darkPen.EndCap = LineCap.Round;
-            accentPen.StartCap = accentPen.EndCap = LineCap.Round;
-            accentPen.LineJoin = LineJoin.Round;
-            g.FillPath(purple,tile);
-            g.FillPath(lilac,back);
-            g.DrawLine(darkPen,143,76,191,76);
-            g.DrawLine(darkPen,167,65,174,76);
-            g.DrawBezier(darkPen,149,89,154,113,171,131,193,140);
-            g.DrawBezier(darkPen,183,89,178,113,162,131,140,140);
-            g.FillPath(white,front);
-            g.FillPolygon(white,new PointF[]{new PointF(60,182),new PointF(60,210),new PointF(94,182)});
-            g.DrawLines(accentPen,new PointF[]{new PointF(68,164),new PointF(92,112),new PointF(100,112),new PointF(124,164)});
-            g.DrawLine(accentPen,78,149,115,149);
+        using (var background = new SolidBrush(Color.FromArgb(16,16,16)))
+        using (var blue = new SolidBrush(Color.FromArgb(158,207,255)))
+        using (var orange = new SolidBrush(Color.FromArgb(243,162,116)))
+        using (var tile = Round(8,8,240,240,54))
+        using (var top = new GraphicsPath())
+        using (var bottom = new GraphicsPath())
+        using (var bluePen = new Pen(blue,21))
+        using (var orangePen = new Pen(orange,21)) {
+            bluePen.StartCap = bluePen.EndCap = LineCap.Round;
+            orangePen.StartCap = orangePen.EndCap = LineCap.Round;
+            bluePen.LineJoin = orangePen.LineJoin = LineJoin.Round;
+            g.FillPath(background,tile);
+            top.AddLine(62,162,62,111);
+            top.AddBezier(62,111,62,88,72,79,94,79);
+            top.AddLine(94,79,148,79);
+            g.DrawPath(bluePen,top);
+            g.FillPolygon(blue,new PointF[]{new PointF(169,79),new PointF(138.98f,64.18f),new PointF(138.98f,93.82f)});
+            bottom.AddLine(194,94,194,145);
+            bottom.AddBezier(194,145,194,168,184,177,162,177);
+            bottom.AddLine(162,177,108,177);
+            g.DrawPath(orangePen,bottom);
+            g.FillPolygon(orange,new PointF[]{new PointF(87,177),new PointF(117.02f,162.18f),new PointF(117.02f,191.82f)});
         }
     }
     public static void Build(string directory) {
