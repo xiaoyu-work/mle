@@ -3,7 +3,7 @@
 A lightweight native Windows selection translator written in Rust. Local
 English-Chinese dictionary first; optional Azure OpenAI, Codex (ChatGPT), or
 GitHub Copilot for missing words and sentences. No browser engine, local language
-model, clipboard-based capture, or MLE selection history.
+model, or MLE selection history.
 
 ## Run
 
@@ -19,15 +19,28 @@ Settings, or right-click it to exit.
 - Ordinary short right-clicks are replayed. Right drags start after moving
   8 pixels. This interception is not identical to native input in every app;
   keyboard mode is recommended for games and unusual mouse interactions.
-- Results appear without taking focus. Esc, an outside click, or changing the
-  foreground application dismisses the popup. Long results can be scrolled.
+- Results appear without taking focus. Click the result to select text and use
+  Ctrl+C, or right-click for Copy / Select all. Esc, an outside click, or switching
+  to an unrelated foreground application dismisses the popup.
 - The compact popup shows only the result, without branding, headings, or original
   text. Dictionary meanings remain separated and long results can be scrolled.
 
-Selection capture uses UI Automation. Compatibility depends on the source
-application's accessibility implementation. Image text, password fields, secure
-desktop, and higher-privilege applications are not supported. No clipboard
-fallback or OCR is performed.
+Selection capture tries UI Automation first. If the focused control exposes no
+selected text, MLE can simulate Ctrl+C in the source application. Before doing
+so it duplicates every available clipboard format; it does not just save plain
+text. Unsupported formats and backups larger than 64 MB stop the operation
+without triggering a copy. After reading the copied text, it restores the saved
+clipboard, checking the clipboard sequence while locked so a newer change is
+not overwritten. An update owned by another application's process is left alone.
+Explicitly copying a translation is intentional and replaces the clipboard.
+
+The copy fallback temporarily uses the system clipboard. Clipboard history,
+sync, or clipboard-manager software can observe that temporary copy; restoring
+the current clipboard cannot retract their records. Windows/app failure or a
+source that completes copying unusually late can prevent restoration; errors
+are reported, not hidden. Apps with nonstandard copy shortcuts, image text,
+password fields, secure desktop, and higher-privilege windows are unsupported.
+No OCR is performed.
 
 ## Settings and privacy
 

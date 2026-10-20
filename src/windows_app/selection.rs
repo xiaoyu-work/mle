@@ -1,4 +1,4 @@
-use windows::Win32::{System::Com::*, UI::Accessibility::*};
+use windows::Win32::{Foundation::HWND, System::Com::*, UI::Accessibility::*};
 
 use crate::AppResult;
 
@@ -23,9 +23,11 @@ impl Selection {
         }
     }
 
-    pub fn text(&self) -> AppResult<String> {
+    pub fn text(&self, source: HWND) -> AppResult<String> {
+        let focused_process;
         unsafe {
             let mut element = self.automation.GetFocusedElement()?;
+            focused_process = element.CurrentProcessId()? as u32;
             let walker = self.automation.ControlViewWalker()?;
             // Some apps focus a child of the control exposing TextPattern.
             for _ in 0..6 {
@@ -61,7 +63,7 @@ impl Selection {
                 };
             }
         }
-        Err("Cannot read the selection in this application. Select text in a supported text control; password fields and image text are not supported.".into())
+        super::clipboard::copy_selection(source, focused_process)
     }
 }
 

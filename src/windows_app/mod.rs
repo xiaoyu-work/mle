@@ -1,3 +1,4 @@
+mod clipboard;
 mod credentials;
 mod http;
 mod popup;
@@ -130,7 +131,7 @@ fn worker(receiver: Receiver<Work>, replies: mpsc::Sender<Reply>, host: isize) {
                     "The active application changed. Select the text and try again.".into(),
                 );
             }
-            let selection = selection::Selection::new()?.text()?;
+            let selection = selection::Selection::new()?.text(source)?;
             if unsafe { GetForegroundWindow() } != source {
                 return Err("The active application changed while reading the selection.".into());
             }
@@ -499,6 +500,7 @@ unsafe extern "system" fn host_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                 APP.with(|cell| {
                     if let Some(app) = cell.borrow_mut().as_mut()
                         && GetForegroundWindow() != app.source
+                        && GetForegroundWindow() != app.popup.hwnd
                     {
                         app.dismiss();
                     }
@@ -666,6 +668,7 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         let target = GetAncestor(WindowFromPoint(input.pt), GA_ROOT);
         if (event == WM_LBUTTONDOWN || event == WM_MBUTTONDOWN || event == WM_RBUTTONDOWN)
             && target.0 as isize != POPUP.load(Ordering::Relaxed)
+            && !popup::context_menu_active()
         {
             let _ = PostMessageW(Some(host), DISMISS_EVENT, WPARAM(0), LPARAM(0));
         }

@@ -5,6 +5,7 @@ use windows::{
         System::LibraryLoader::*,
         UI::{
             Controls::{RichEdit::*, *},
+            Input::KeyboardAndMouse::SetFocus,
             WindowsAndMessaging::*,
         },
     },
@@ -13,9 +14,14 @@ use windows::{
 
 use super::{DISMISS_EVENT, HOST, send_message, theme, wide};
 use crate::{AppResult, dictionary};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const BODY: i32 = 303;
+static CONTEXT_MENU: AtomicBool = AtomicBool::new(false);
+
+pub fn context_menu_active() -> bool {
+    CONTEXT_MENU.load(Ordering::Relaxed)
+}
 
 pub enum Content {
     Loading,
@@ -112,7 +118,7 @@ impl Window {
     pub fn create(host: HWND) -> AppResult<Self> {
         unsafe {
             let hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 w!("MLE.Popup"),
                 w!("MLE translation"),
                 WS_POPUP | WS_CLIPCHILDREN,
@@ -336,11 +342,24 @@ pub unsafe extern "system" fn window_proc(
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
-            WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+            WM_MOUSEACTIVATE => LRESULT(MA_ACTIVATE as isize),
+            WM_ACTIVATE if wp.0 & 0xffff != WA_INACTIVE as usize => {
+                if let Ok(body) = GetDlgItem(Some(hwnd), BODY) {
+                    let _ = SetFocus(Some(body));
+                }
+                LRESULT(0)
+            }
+            WM_CONTEXTMENU => {
+                if let Err(error) = context_menu(hwnd, lp) {
+                    super::defer_error(error.to_string());
+                }
+                LRESULT(0)
+            }
             WM_SIZE => {
                 if let Err(error) = layout(hwnd) {
                     super::defer_error(error.to_string());
                 }
+
                 LRESULT(0)
             }
             WM_CLOSE => {
@@ -368,5 +387,64 @@ pub unsafe extern "system" fn window_proc(
             }
             _ => DefWindowProcW(hwnd, message, wp, lp),
         }
+    }
+}
+
+fn context_menu(hwnd: HWND, position: LPARAM) -> AppResult<()> {
+    unsafe {
+        let body = GetDlgItem(Some(hwnd), BODY)?;
+        let mut selection = CHARRANGE::default();
+        send_message(
+            body,
+            EM_EXGETSEL,
+            WPARAM(0),
+            LPARAM((&mut selection as *mut CHARRANGE) as isize),
+        );
+        let menu = CreatePopupMenu()?;
+        let result = (|| -> AppResult<()> {
+            AppendMenuW(
+                menu,
+                if selection.cpMin != selection.cpMax {
+                    MF_STRING
+                } else {
+                    MF_STRING | MF_GRAYED
+                },
+                1,
+                w!("Copy\tCtrl+C"),
+            )?;
+            AppendMenuW(menu, MF_STRING, 2, w!("Select all\tCtrl+A"))?;
+            let mut point = POINT {
+                x: (position.0 as u16) as i16 as i32,
+                y: ((position.0 >> 16) as u16) as i16 as i32,
+            };
+            if position.0 == -1 {
+                GetCaretPos(&mut point)?;
+                let _ = ClientToScreen(body, &mut point);
+            }
+            CONTEXT_MENU.store(true, Ordering::Relaxed);
+            let chosen = TrackPopupMenu(
+                menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                point.x,
+                point.y,
+                None,
+                hwnd,
+                None,
+            )
+            .0;
+            CONTEXT_MENU.store(false, Ordering::Relaxed);
+            match chosen {
+                1 => {
+                    send_message(body, WM_COPY, WPARAM(0), LPARAM(0));
+                }
+                2 => {
+                    send_message(body, EM_SETSEL, WPARAM(0), LPARAM(-1));
+                }
+                _ => {}
+            }
+            Ok(())
+        })();
+        DestroyMenu(menu)?;
+        result
     }
 }
