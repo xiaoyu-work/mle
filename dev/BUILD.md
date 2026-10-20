@@ -1,6 +1,7 @@
 # Building MLE
 
-Requires Windows 10/11 x64, stable Rust, and the MSVC C++ build tools / Windows SDK.
+Requires Windows 10/11 x64 or Windows 11 ARM64, stable Rust, and the matching
+MSVC C++ build tools / Windows SDK.
 Run all commands from the repository root.
 
 ## Build and package
@@ -18,8 +19,10 @@ The portable application is generated in `dist\MLE`. Keep the `data` and
 In the repository's **Actions** tab, select **Build Windows app**, then
 **Run workflow**. It does not run automatically on pushes or pull requests.
 
-Download the `MLE-windows-x64` artifact from the completed run and extract
-`MLE-windows-x64.zip`. Open `MLE\mle.exe`, keeping the included folders beside it.
+The workflow builds natively on separate x64 and ARM64 Windows runners.
+Download the matching artifact (`MLE-windows-x64` or `MLE-windows-arm64`)
+from the completed run and extract it once.
+Open `mle.exe`, keeping the included folders beside it.
 This is an unsigned portable package, not an installer; Windows may show a
 SmartScreen warning.
 

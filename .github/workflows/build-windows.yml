@@ -8,7 +8,20 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            machine: 0x8664
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            machine: 0xAA64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
       run:
@@ -19,15 +32,15 @@ jobs:
 
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal --no-self-update
+          rustup toolchain install stable-${{ matrix.target }} --profile minimal --no-self-update
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed.' }
-          rustup default stable
+          rustup default stable-${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed.' }
 
       - name: Build portable app
         run: .\tools\package.ps1
 
-      - name: Create ZIP package
+      - name: Verify portable package
         run: |
           $required = @('mle.exe', 'data\dictionary.db', 'licenses\ECDICT.txt', 'README.md', 'LICENSE')
           foreach ($file in $required) {
@@ -35,12 +48,17 @@ jobs:
               throw "Missing package file: $file"
             }
           }
-          Compress-Archive -Path 'dist\MLE' -DestinationPath 'dist\MLE-windows-x64.zip'
+          $exe = [IO.File]::ReadAllBytes('dist\MLE\mle.exe')
+          $peOffset = [BitConverter]::ToInt32($exe, 0x3c)
+          $machine = [BitConverter]::ToUInt16($exe, $peOffset + 4)
+          if ($machine -ne ${{ matrix.machine }}) {
+            throw "Incorrect executable architecture: $machine"
+          }
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: MLE-windows-x64
-          path: dist\MLE-windows-x64.zip
+          name: MLE-windows-${{ matrix.arch }}
+          path: dist\MLE
           if-no-files-found: error
           retention-days: 30
